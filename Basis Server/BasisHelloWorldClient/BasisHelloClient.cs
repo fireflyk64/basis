@@ -9,6 +9,16 @@ using static SerializableBasis;
 
 namespace Basis.HelloWorld
 {
+    /// <summary>How a hello message reached its recipient.</summary>
+    public enum HelloTransport
+    {
+        /// <summary>Relayed by the server, which stamped it with the sender's player id.</summary>
+        ServerRelay,
+
+        /// <summary>Carried over a direct peer-to-peer link, never touching the server.</summary>
+        DirectLink,
+    }
+
     /// <summary>
     /// The smallest client that can hold a conversation on a Basis server: connect, prove who you
     /// are, learn your own player id, then send numbers and strings to another player by id.
@@ -27,7 +37,7 @@ namespace Basis.HelloWorld
     /// <see cref="NumberReceived"/> and <see cref="TextReceived"/> are raised on that thread; the
     /// Send methods may be called from any thread.</para>
     /// </summary>
-    public sealed class BasisHelloClient : IDisposable
+    public class BasisHelloClient : IDisposable
     {
         /// <summary>
         /// Identifies this app's traffic on the shared scene channel. The field is a network id in
@@ -69,11 +79,11 @@ namespace Basis.HelloWorld
         /// <summary>True once the server has accepted the identity challenge and sent our metadata.</summary>
         public bool IsJoined => _joined.IsSet;
 
-        /// <summary>Raised with (senderPlayerId, value) for every number another player sends here.</summary>
-        public event Action<ushort, int>? NumberReceived;
+        /// <summary>Raised with (senderPlayerId, value, path) for every number another player sends here.</summary>
+        public event Action<ushort, int, HelloTransport>? NumberReceived;
 
-        /// <summary>Raised with (senderPlayerId, text) for every string another player sends here.</summary>
-        public event Action<ushort, string>? TextReceived;
+        /// <summary>Raised with (senderPlayerId, text, path) for every string another player sends here.</summary>
+        public event Action<ushort, string, HelloTransport>? TextReceived;
 
         public BasisHelloClient(string displayName)
         {
@@ -127,6 +137,9 @@ namespace Basis.HelloWorld
                 },
             };
 
+            ServerHost = ip;
+            ServerPort = port;
+
             _client = new NetworkClient();
             _peer = _client.StartClient(ip, port, ready, Encoding.UTF8.GetBytes(password), CreateConfiguration(), manualMode: true);
             if (_peer == null)
@@ -142,27 +155,27 @@ namespace Basis.HelloWorld
         }
 
         /// <summary>Sends one number to one player. Reliable and ordered, so a volley cannot overtake itself.</summary>
-        public void SendNumber(ushort targetPlayerId, int value)
-        {
-            byte[] payload =
-            {
-                KindNumber,
-                (byte)value,
-                (byte)(value >> 8),
-                (byte)(value >> 16),
-                (byte)(value >> 24),
-            };
-            Send(targetPlayerId, payload);
-        }
+        public void SendNumber(ushort targetPlayerId, int value) => Send(targetPlayerId, EncodeNumber(value));
 
         /// <summary>Sends one string to one player.</summary>
-        public void SendText(ushort targetPlayerId, string text)
+        public void SendText(ushort targetPlayerId, string text) => Send(targetPlayerId, EncodeText(text));
+
+        protected static byte[] EncodeNumber(int value) => new byte[]
+        {
+            KindNumber,
+            (byte)value,
+            (byte)(value >> 8),
+            (byte)(value >> 16),
+            (byte)(value >> 24),
+        };
+
+        protected static byte[] EncodeText(string text)
         {
             byte[] utf8 = Encoding.UTF8.GetBytes(text);
             byte[] payload = new byte[utf8.Length + 1];
             payload[0] = KindText;
             Buffer.BlockCopy(utf8, 0, payload, 1, utf8.Length);
-            Send(targetPlayerId, payload);
+            return payload;
         }
 
         private void Send(ushort targetPlayerId, byte[] payload)
@@ -173,6 +186,16 @@ namespace Basis.HelloWorld
                 throw new InvalidOperationException($"{DisplayName} has not joined a server yet.");
             }
 
+            SendVia(peer, targetPlayerId, payload, BasisNetworkCommons.SceneChannel);
+        }
+
+        /// <summary>
+        /// Puts one payload on a server relay channel addressed to one player. The channel is a
+        /// parameter because the server runs the same relay for the plain scene channel and for
+        /// the direct-origin fallback channel, and a subclass with a P2P link needs the latter.
+        /// </summary>
+        protected static void SendVia(NetPeer peer, ushort targetPlayerId, byte[] payload, byte channel)
+        {
             SceneDataMessage message = new SceneDataMessage
             {
                 messageIndex = HelloMessageIndex,
@@ -184,15 +207,24 @@ namespace Basis.HelloWorld
 
             NetDataWriter writer = new NetDataWriter();
             message.Serialize(writer);
-            peer.Send(writer, BasisNetworkCommons.SceneChannel, DeliveryMethod.ReliableOrdered);
+            peer.Send(writer, channel, DeliveryMethod.ReliableOrdered);
         }
+
+        /// <summary>The connection to the server, for a subclass that needs to signal on it.</summary>
+        protected NetPeer? ServerPeer => _peer;
+
+        /// <summary>Where the server is. A NAT-punch introduce request has to be addressed to it by name.</summary>
+        protected string ServerHost { get; private set; } = string.Empty;
+
+        /// <summary>Port the server listens on.</summary>
+        protected int ServerPort { get; private set; }
 
         /// <summary>
         /// Tells the server we are leaving, then closes the socket. Idempotent, and safe to call
         /// from a message handler — the pump takes the client off its list before the transport
         /// goes away, and never stops a transport it is in the middle of polling.
         /// </summary>
-        public void Disconnect()
+        public virtual void Disconnect()
         {
             if (_client == null) return;
 
@@ -214,6 +246,7 @@ namespace Basis.HelloWorld
             {
                 _client?.Poll();
                 _client?.Update(elapsedMs);
+                OnTick(elapsedMs);
             }
             catch (Exception ex)
             {
@@ -239,7 +272,11 @@ namespace Basis.HelloWorld
                         break;
 
                     case BasisNetworkCommons.SceneChannel:
-                        HandleSceneMessage(reader);
+                        HandleRelayedScene(reader);
+                        break;
+
+                    default:
+                        HandleOtherChannel(peer, reader, channel);
                         break;
                 }
             }
@@ -275,27 +312,48 @@ namespace Basis.HelloWorld
             peer.Send(writer, BasisNetworkCommons.AuthIdentityChannel, DeliveryMethod.ReliableOrdered);
         }
 
-        private void HandleSceneMessage(NetPacketReader reader)
+        /// <summary>A message the base client does not know; a subclass may claim it.</summary>
+        protected virtual void HandleOtherChannel(NetPeer peer, NetPacketReader reader, byte channel)
+        {
+        }
+
+        /// <summary>Extra work on the shared pump thread, for a subclass with its own transport.</summary>
+        protected virtual void OnTick(float elapsedMs)
+        {
+        }
+
+        /// <summary>Reads one server-relayed scene message, which carries the sender's id in the frame.</summary>
+        protected void HandleRelayedScene(NetPacketReader reader)
         {
             ServerSceneDataMessage message = new ServerSceneDataMessage();
             message.Deserialize(reader);
 
             if (message.sceneDataMessage.messageIndex != HelloMessageIndex) return;
 
-            ushort sender = message.playerIdMessage.playerID;
-            byte[]? payload = message.sceneDataMessage.payload;
-            int length = message.sceneDataMessage.payloadLength;
+            RaisePayload(
+                message.playerIdMessage.playerID,
+                message.sceneDataMessage.payload,
+                message.sceneDataMessage.payloadLength,
+                HelloTransport.ServerRelay);
+        }
+
+        /// <summary>
+        /// Turns one decoded payload into an event. Separate from the frame parsing above because a
+        /// direct link identifies its peer by the socket rather than by a sender id in the bytes.
+        /// </summary>
+        protected void RaisePayload(ushort sender, byte[]? payload, int length, HelloTransport transport)
+        {
             if (payload == null || length < 1) return;
 
             switch (payload[0])
             {
                 case KindNumber when length >= 5:
                     int value = payload[1] | (payload[2] << 8) | (payload[3] << 16) | (payload[4] << 24);
-                    NumberReceived?.Invoke(sender, value);
+                    NumberReceived?.Invoke(sender, value, transport);
                     break;
 
                 case KindText:
-                    TextReceived?.Invoke(sender, Encoding.UTF8.GetString(payload, 1, length - 1));
+                    TextReceived?.Invoke(sender, Encoding.UTF8.GetString(payload, 1, length - 1), transport);
                     break;
             }
         }

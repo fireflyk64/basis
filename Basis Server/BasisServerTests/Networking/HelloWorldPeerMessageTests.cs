@@ -105,7 +105,7 @@ public sealed class HelloWorldPeerMessageTests : IClassFixture<HelloWorldServerF
             {
                 inbox[i] = new ConcurrentBag<(ushort, string)>();
                 int index = i;
-                clients[i].TextReceived += (sender, text) => inbox[index].Add((sender, text));
+                clients[i].TextReceived += (sender, text, _) => inbox[index].Add((sender, text));
             }
 
             for (int from = 0; from < ClientCount; from++)
@@ -171,7 +171,7 @@ public sealed class HelloWorldPeerMessageTests : IClassFixture<HelloWorldServerF
                 BasisHelloClient self = clients[i];
                 BasisHelloClient next = clients[(i + 1) % ClientCount];
 
-                self.NumberReceived += (sender, value) =>
+                self.NumberReceived += (sender, value, _) =>
                 {
                     hops.Enqueue((index, sender, value));
                     if (value >= FinalValue) finished.Set();
