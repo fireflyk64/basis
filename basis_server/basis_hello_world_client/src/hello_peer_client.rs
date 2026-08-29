@@ -150,15 +150,21 @@ impl HelloPeerClient {
             return Err(BasisError::permanent(ErrorCode::InvalidArgument, "A client cannot open a direct link to itself."));
         }
         if let Some(existing) = self.by_player.get(&other_player_id).map(|s| s.clone()) {
-            return Ok(existing.wait_confirmed(timeout));
+            return Ok(Self::await_link(&existing, timeout));
         }
         let session = Arc::new(DirectSession::new(uuid::Uuid::new_v4().simple().to_string(), other_player_id));
         if !self.register(&session) {
             // Both sides asked at once and the other's session won the slot.
-            return Ok(self.by_player.get(&other_player_id).map(|s| s.clone()).is_some_and(|winner| winner.wait_confirmed(timeout)));
+            return Ok(self.by_player.get(&other_player_id).map(|s| s.clone()).is_some_and(|winner| Self::await_link(&winner, timeout)));
         }
         self.send_signal(&server, BasisNetworkCommons::P2P_SUB_REQUEST, other_player_id, &session.token, Some(session.local_public.clone()))?;
-        Ok(session.wait_confirmed(timeout))
+        Ok(Self::await_link(&session, timeout))
+    }
+
+    /// True only for a link the server confirmed. A session the server declined (no such
+    /// player, a link that was lost) also wakes the waiter, and that is a false, not a timeout.
+    fn await_link(session: &DirectSession, timeout: Duration) -> bool {
+        session.wait_confirmed(timeout) && session.is_offloaded()
     }
 
     pub fn send_number_direct(&self, target_player_id: u16, value: i32) -> BasisResult<()> {

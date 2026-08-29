@@ -7,12 +7,33 @@ use basis_network_core::BasisNetworkCommons;
 
 use super::distance::DistanceSweepState;
 use super::{BasisServerReductionSystemEvents, now_ticks};
-use crate::reduction::{PlayerState, ReceiverData};
+use crate::reduction::{PlayerState, ReceiverData, SenderWork};
 
 impl BasisServerReductionSystemEvents {
     pub fn test_only_pre_serialize_frame(state: &PlayerState, publish_gen: i64, force_keyframe: bool) {
         let mut sender = state.sender.lock();
         Self::pre_serialize_frame(state, &mut sender, publish_gen, force_keyframe);
+    }
+
+    /// The C# `PreSerializeKeyframe`: serializes one quality's keyframe wire into `sender`.
+    pub fn test_only_pre_serialize_keyframe(state: &PlayerState, sender: &mut SenderWork, qi: usize, player_id: u16) {
+        Self::pre_serialize_keyframe(state, sender, qi, player_id);
+    }
+
+    /// The C# `PreSerializeDelta`: serializes one quality's delta wire against the held baseline.
+    pub fn test_only_pre_serialize_delta(state: &PlayerState, sender: &mut SenderWork, qi: usize, player_id: u16) {
+        Self::pre_serialize_delta(state, sender, qi, player_id);
+    }
+
+    /// The C# `UpdateKeyframeStretch`: feeds one High delta length into the adaptive stretch.
+    pub fn test_only_update_keyframe_stretch(sender: &mut SenderWork, high_delta_length: usize) {
+        Self::update_keyframe_stretch(sender, high_delta_length);
+    }
+
+    /// The C# `PropagateAdditionalData`: copies (or strips) the High additional data into the
+    /// lower tiers held by `sender`.
+    pub fn test_only_propagate_additional_data(sender: &mut SenderWork) {
+        Self::propagate_additional_data(sender);
     }
 
     pub fn test_only_build_raw_for_range(recv: &mut ReceiverData, start: usize, end: usize) -> usize {

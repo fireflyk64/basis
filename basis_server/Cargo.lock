@@ -277,38 +277,44 @@ version = "2.10.1"
 dependencies = [
  "basis_crypto",
  "basis_did",
+ "basis_error",
  "basis_network_client",
  "basis_network_core",
  "bytes",
+ "dashmap",
  "iroh",
  "parking_lot",
  "rand",
+ "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
 name = "basis_iroh_ffi"
 version = "2.10.1"
 dependencies = [
- "bytes",
+ "basis_error",
+ "basis_network_core",
  "iroh",
- "iroh-base",
- "libc",
  "parking_lot",
- "tokio",
+ "serde_json",
 ]
 
 [[package]]
 name = "basis_network_client"
 version = "2.10.1"
 dependencies = [
+ "base64",
  "basis_crypto",
  "basis_did",
+ "basis_error",
  "basis_network_core",
  "bytes",
  "iroh",
  "parking_lot",
  "rand",
+ "serde_json",
  "thiserror 2.0.20",
  "tokio",
 ]
@@ -317,12 +323,17 @@ dependencies = [
 name = "basis_network_client_console"
 version = "2.10.1"
 dependencies = [
+ "arc-swap",
  "basis_crypto",
  "basis_did",
+ "basis_error",
  "basis_network_client",
  "basis_network_core",
+ "dashmap",
+ "flate2",
  "half",
  "lz4_flex",
+ "num_cpus",
  "parking_lot",
  "quick-xml 0.42.0",
  "rand",
@@ -345,6 +356,7 @@ dependencies = [
 name = "basis_network_console"
 version = "2.10.1"
 dependencies = [
+ "basis_error",
  "basis_network_compute",
  "basis_network_core",
  "basis_network_server",
@@ -447,12 +459,16 @@ dependencies = [
 name = "basis_rest_api_tests"
 version = "2.10.1"
 dependencies = [
+ "base64",
+ "basis_error",
  "basis_network_core",
  "basis_network_server",
+ "dashmap",
  "serde_json",
  "serial_test",
  "tempfile",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -461,12 +477,14 @@ version = "2.10.1"
 dependencies = [
  "basis_crypto",
  "basis_did",
+ "basis_error",
  "basis_hello_world_client",
  "basis_network_client",
  "basis_network_compute",
  "basis_network_core",
  "basis_network_server",
  "bytes",
+ "dashmap",
  "half",
  "iroh",
  "lz4_flex",

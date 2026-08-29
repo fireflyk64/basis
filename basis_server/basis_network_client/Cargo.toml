@@ -16,3 +16,6 @@ bytes.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 thiserror.workspace = true
+basis_error = { path = "../basis_error" }
+base64.workspace = true
+serde_json.workspace = true

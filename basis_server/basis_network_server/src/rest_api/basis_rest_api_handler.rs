@@ -141,6 +141,11 @@ impl BasisRestApiHandler {
         response
     }
 
+    /// The address the listener actually bound — with port 0 configured, the port the OS chose.
+    pub fn bound_addr(&self) -> std::net::SocketAddr {
+        self.bound_addr
+    }
+
     pub fn stop(&mut self) {
         self.cancellation.cancel();
         if let Some(shutdown) = self.shutdown.take() {

@@ -158,7 +158,11 @@ impl BasisAvatarDeltaCompression {
         if baseline.len() < g.payload_size || out_full.len() < g.payload_size {
             return false;
         }
-        if delta_len < Self::DIRTY_MASK_BYTES || delta_start + delta_len > delta.len() {
+        // Checked: a caller-supplied window must not be able to overflow into a wrong slice.
+        let Some(delta_end) = delta_start.checked_add(delta_len) else {
+            return false;
+        };
+        if delta_len < Self::DIRTY_MASK_BYTES || delta_end > delta.len() {
             return false;
         }
 
@@ -206,7 +210,7 @@ impl BasisAvatarDeltaCompression {
     /// Reads the dirty mask and codes at the start of a delta body and returns the total body
     /// length in bytes (mask + encoded fields), or `None` if the body is truncated or malformed.
     pub fn delta_body_length(delta: &[u8], start: usize, available: usize, q: BitQuality) -> Option<usize> {
-        if available < Self::DIRTY_MASK_BYTES || start + Self::DIRTY_MASK_BYTES > delta.len() {
+        if available < Self::DIRTY_MASK_BYTES || start.checked_add(Self::DIRTY_MASK_BYTES).is_none_or(|end| end > delta.len()) {
             return None;
         }
         let limit = available.min(delta.len() - start);

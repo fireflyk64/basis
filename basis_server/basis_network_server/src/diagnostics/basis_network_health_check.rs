@@ -223,7 +223,7 @@ impl BasisNetworkHealthCheck {
         let lz4_raw = s.bundle_raw_bytes - s.bundle_zstd_raw_bytes;
         let lz4_emitted = s.bundles_emitted - s.bundle_zstd_emitted;
         sb.push_str(&format!(
-            ",\"bundles\":{{\"emitted\":{},\"messages\":{},\"tailUncompressed\":{},\"fallbacks\":{},\"retries\":{},\"rawBytes\":{},\"compressedBytes\":{},\"savedBytes\":{},\"ratio\":{},\"perTick\":{},\"avgMessages\":{},\"deflateMsPerTick\":{},\"avgDeflateUs\":{},\"zstd\":{{\"dictGeneration\":{},\"emitted\":{},\"shareOfBundles\":{},\"rawBytes\":{},\"compressedBytes\":{},\"ratio\":{},\"msPerTick\":{},\"avgUs\":{},\"lz4Ratio\":{},\"lz4AvgUs\":{}}}}}}}",
+            ",\"bundles\":{{\"emitted\":{},\"messages\":{},\"tailUncompressed\":{},\"fallbacks\":{},\"retries\":{},\"rawBytes\":{},\"compressedBytes\":{},\"savedBytes\":{},\"ratio\":{},\"perTick\":{},\"avgMessages\":{},\"deflateMsPerTick\":{},\"avgDeflateUs\":{},\"zstd\":{{\"dictGeneration\":{},\"emitted\":{},\"shareOfBundles\":{},\"rawBytes\":{},\"compressedBytes\":{},\"ratio\":{},\"msPerTick\":{},\"avgUs\":{},\"lz4Ratio\":{},\"lz4AvgUs\":{}}}}}}}}}",
             s.bundles_emitted,
             s.bundle_messages,
             s.bundle_tail_uncompressed,
@@ -249,6 +249,11 @@ impl BasisNetworkHealthCheck {
             json_num(if lz4_emitted > 0 { (s.bundle_deflate_ms - s.bundle_zstd_ms) * 1000.0 / lz4_emitted as f64 } else { 0.0 }, 2)
         ));
         sb
+    }
+
+    /// The address the listener actually bound — with port 0 configured, the port the OS chose.
+    pub fn bound_addr(&self) -> std::net::SocketAddr {
+        self.bound_addr
     }
 
     pub fn stop(&mut self) {
