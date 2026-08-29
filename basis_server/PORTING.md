@@ -115,6 +115,28 @@ into the Rust server over LiteNetLib and over iroh through `basis_iroh_ffi`. The
 same from its end in `BasisServerTests/Networking/MixedWorldRustServerTests.cs`, which spawns
 the Rust server from its release build.
 
+## Bounds (what a client can make the server allocate)
+
+Every queue a remote peer can grow is bounded by a **size**, never by a duration; where a timer
+appears it only reclaims a stuck slot sooner, so memory is bounded at every instant whatever the
+timing. The C# server has none of these bounds except the unreliable ones.
+
+| what a peer can grow | bound | setting |
+|---|---|---|
+| reliable send queue (both transports) | bytes per peer, then disconnect | `MaxReliableQueueBytesPerPeer`, `ReliableQueueGraceMs` |
+| unreliable / voice send queues | packets per peer, oldest dropped | `MaxUnreliableQueuePerPeer`, `MaxPriorityUnreliableQueuePerPeer` |
+| incomplete fragment sets (LNL) | bytes per peer | `MaxFragmentBytesPerPeer` |
+| pending connect requests (LNL) | count | `MaxPendingRequests` |
+| rejected-connection state (LNL) | count, then stateless refusal | `MaxRejectPeers` |
+| connections awaiting a verdict (iroh) | count | `MaxPendingHandshakes` |
+| probe replies awaiting an answer (iroh) | count (1024, fixed) | — |
+| unacknowledged / unread data (iroh) | QUIC windows | `SendWindowBytes`, `ReceiveWindowBytes` |
+| owned objects (client-chosen ids) | count per player | `MaxOwnedObjectsPerPlayer` |
+
+A send refused by a bound is a `SendError::QueueFull` — a transient fault the caller sees — not
+a silent drop. A peer whose reliable queue stops draining is disconnected with
+`DisconnectReason::SendQueueOverBudget`.
+
 ## Status
 
 - [x] contrib: crypto, did, handles (+ tests)

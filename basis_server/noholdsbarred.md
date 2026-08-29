@@ -133,13 +133,15 @@ workloads, and not something to add another five years of features to as it stan
   code no Rust transport produces. The trait should say what the *server* needs — a peer is a
   connection identity plus a channel/delivery API plus a bounded send budget — not what one
   UDP library happened to expose.
-* **Reliable send queues are unbounded.** The iroh peer's `reliable_queue` is a `VecDeque`
-  with no cap; the LiteNetLib channel's `outgoing_queue` likewise (as in C#). A client that
-  stops reading — a stalled Unity client, a hostile one — makes the server buffer every
-  reliable message addressed to it (avatar changes, chat, resource loads, the join snapshot
-  batches) without limit. The unreliable queues are bounded and population-scaled; the
-  reliable ones must be too, with a policy (disconnect the peer past a budget) rather than
-  memory growth. **This is the most important robustness gap in both servers.**
+* ~~**Reliable send queues are unbounded.**~~ **Fixed** (commit `bound every queue a client
+  can grow, by size rather than by time`). Both transports now carry a per-peer byte budget,
+  scaled from memory and population; a send past it returns `SendError::QueueFull` and a peer
+  whose queue has not drained for the grace period is disconnected with
+  `DisconnectReason::SendQueueOverBudget`. The same pass bounded incomplete fragment sets by
+  bytes, pending connect requests, rejected-connection state, iroh's pending handshakes and
+  probe replies, QUIC's own per-connection windows, and the ownership table (per-player cap).
+  The C# server still has every one of these holes: it is the same design, and this is now the
+  clearest concrete argument for the Rust server in a security review.
 * **Events are raised on transport threads.** The listener's handlers — the whole server —
   run on tokio workers and on the LiteNetLib receive tasks, taking the server's locks from
   there. The port had to learn the hard way where a handler may re-enter the transport (the
@@ -187,10 +189,12 @@ wire and the message formats stay as they are until item 6.
    reconfiguration by constructing a new instance beside the old, and every dependency
    visible in a signature.
 
-2. **Bounded reliable queues with a disconnect policy.** Per peer: a byte budget for
-   queued-but-unsent reliable data (population-scaled like the unreliable bound), a grace
-   period, then a disconnect with a reason the client can display. This is a week of work and
-   removes the one unbounded-memory path a hostile client has.
+2. ~~**Bounded reliable queues with a disconnect policy.**~~ **Done.** Per peer: a byte budget
+   for queued-but-unsent reliable data (population-scaled like the unreliable bound), a grace
+   period, then a disconnect with a reason the client can display. The principle applied
+   throughout: the bound is a size, never a duration — a timer only decides when a stuck slot
+   is reclaimed, so memory is bounded at every instant regardless of timing. What remains in
+   this area is the same treatment for the C# server, if it is to stay in production.
 
 3. **A message channel between transport and server.** The transport delivers
    `(peer, channel, delivery, Bytes)` into a bounded MPSC; the server drains it on threads it
