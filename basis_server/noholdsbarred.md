@@ -150,7 +150,10 @@ workloads, and not something to add another five years of features to as it stan
   the server over a bounded channel and the server should own its threads.
 * **Per-message allocation.** A `Vec` per datagram, a `Vec` per merged entry, a `Bytes` copy
   per send. LiteNetLib pools (badly, §1.2); the Rust port does not pool at all. It did not
-  show at 400 players on one core; it will show at 4000 on 32.
+  show at 400 players on one core; it will show at 4000 on 32. *Addressed on the `pooling`
+  branch (2026-08-29): a bounded two-level packet buffer pool now serves every one of those
+  paths — send builds are allocation-free, a merged datagram delivers all entries from one
+  buffer — with targeted benchmarks in `benchmarks/results/2026-08-29-pooling/`.*
 * **The iroh path is not yet the cheap one.** Measured: 1.4× the LiteNetLib path's server CPU
   at 100 players and 1.8× at 200, the cost inside quinn's per-connection processing, and it
   did not move with either framing change I made (`benchmarks/results/2026-08-29-two-core`).
@@ -221,7 +224,10 @@ wire and the message formats stay as they are until item 6.
    suites already assert.
 
 7. **Pool the packet path.** After 1–3, a per-transport buffer pool for datagram receive and
-   merged-entry decode; measure before and after on the many-core host.
+   merged-entry decode; measure before and after on the many-core host. *Done ahead of 1–3 on
+   the `pooling` branch (one process-wide bounded pool rather than per-transport, since the MTU
+   gives both transports the same buffer class); micro-measured on the two-core box in
+   `benchmarks/results/2026-08-29-pooling/` — the many-core before/after remains to run.*
 
 8. **Observability as a first-class output.** The `/health` document is good; it should be
    joined by per-peer queue depths, per-transport packet/byte counters (now real for iroh),

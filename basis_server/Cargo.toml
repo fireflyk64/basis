@@ -85,6 +85,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Test-only.
 rstest = "0.26"
 serial_test = "4"
+# Benchmarks (the pooling micro-benchmarks); lean build, no plotters.
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 tempfile = "3"
 
 # Every crate at opt-level 0 compiles fast but the crypto and compression this server leans on

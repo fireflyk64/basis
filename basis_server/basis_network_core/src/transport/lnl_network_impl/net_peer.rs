@@ -8,6 +8,7 @@
 //! them — a handler is free to send on the very channel that delivered to it.
 
 use std::any::Any;
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU8, AtomicU32, AtomicUsize, Ordering};
@@ -16,7 +17,10 @@ use std::time::Instant;
 
 use parking_lot::{Mutex, RwLock};
 
+use bytes::Bytes;
+
 use crate::BNL;
+use crate::pooling::packet_buffer_pool::PacketBufferPool;
 use crate::transport::basis_network_shell::{DeliveryMethod, DisconnectReason, NetDebug, NetLogLevel, SendError};
 
 use super::compact_merge::CompactMerge;
@@ -240,6 +244,14 @@ pub struct LnlPeer {
     /// releases exactly once when it goes.
     is_reject_peer: AtomicBool,
     pub(super) statistics: PeerStatistics,
+}
+
+thread_local! {
+    /// Scratch for the packets a channel releases while processing one inbound datagram,
+    /// reused across datagrams on the same thread so the pass allocates nothing. Taken and put
+    /// back around the delivery loop (never held across it), so reentry — which does not happen
+    /// today — would degrade to a fresh `Vec`, not corruption.
+    static DELIVER_SCRATCH: Cell<Vec<(DeliveryMethod, NetPacket)>> = const { Cell::new(Vec::new()) };
 }
 
 const MTU_CHECK_DELAY: f32 = 1000.0;
@@ -746,14 +758,12 @@ impl LnlPeer {
             let current_fragment_id = self.fragment_id.fetch_add(1, Ordering::Relaxed).wrapping_add(1) as u16;
             let connection_num = self.connection_num();
             for (part_idx, chunk) in data.chunks(packet_data_size).enumerate() {
-                let mut p = NetPacket::with_size(header_size + chunk.len() + NetConstants::FRAGMENT_HEADER_SIZE);
-                p.set_property(property);
+                let mut p = NetPacket::with_payload(property, NetConstants::FRAGMENT_HEADER_SIZE, chunk);
                 p.set_connection_number(connection_num);
                 p.set_fragment_id(current_fragment_id);
                 p.set_fragment_part(part_idx as u16);
                 p.set_fragments_total(total_packets_u16);
                 p.mark_fragmented();
-                p.raw_mut()[NetConstants::FRAGMENTED_HEADER_TOTAL_SIZE..].copy_from_slice(chunk);
                 // Budget already reserved above; the per-packet check cannot fire, so ignore it.
                 let _ = self.queue_on_channel(channel_idx, p);
             }
@@ -761,10 +771,8 @@ impl LnlPeer {
         }
 
         // Else just send
-        let mut packet = NetPacket::with_size(header_size + length);
-        packet.set_property(property);
+        let mut packet = NetPacket::with_payload(property, 0, data);
         packet.set_connection_number(self.connection_num());
-        packet.raw_mut()[header_size..].copy_from_slice(data);
         match channel_idx {
             None => {
                 packet.raw_mut()[1] = channel_number;
@@ -785,11 +793,9 @@ impl LnlPeer {
             return Ok(());
         }
         let header_size = NetConstants::UNRELIABLE_HEADER_SIZE;
-        let mut packet = NetPacket::with_size(header_size + data.len());
-        packet.set_property(PacketProperty::Unreliable);
+        let mut packet = NetPacket::with_payload(PacketProperty::Unreliable, 0, data);
         packet.set_connection_number(self.connection_num());
         packet.raw_mut()[1] = channel_number;
-        packet.raw_mut()[header_size..].copy_from_slice(data);
         if let Ok(patch) = usize::try_from(patch_offset)
             && patch < data.len()
         {
@@ -982,8 +988,10 @@ impl LnlPeer {
         if packet.raw()[0] == header0 {
             return self.send_raw(packet.raw());
         }
-        let mut copy = packet.raw().to_vec();
-        copy[0] = header0;
+        let mut copy = PacketBufferPool::rent_copy(packet.raw());
+        if let Some(first) = copy.first_mut() {
+            *first = header0;
+        }
         self.send_raw(&copy)
     }
 
@@ -1031,7 +1039,7 @@ impl LnlPeer {
                     if raw.len() - pos < size {
                         break;
                     }
-                    let merged = NetPacket::from_bytes(raw[pos..pos + size].to_vec());
+                    let merged = NetPacket::from_slice(&raw[pos..pos + size]);
                     if !merged.verify() {
                         break;
                     }
@@ -1040,28 +1048,34 @@ impl LnlPeer {
                 }
             }
             Some(PacketProperty::CompactMerged) => {
+                // One pooled datagram buffer serves every entry it carries: a raw Ack/Channeled
+                // entry is copied out (it lives on independently in a channel window), while an
+                // unreliable entry is delivered as a zero-copy view of the datagram, which goes
+                // back to the pool when the application drops its last reader.
+                let raw: Bytes = packet.into_shared();
                 let mut compact_pos = NetConstants::HEADER_SIZE;
-                let raw = packet.raw();
                 while compact_pos < raw.len() {
-                    let Some(entry) = CompactMerge::try_read_entry(raw, raw.len(), &mut compact_pos) else {
+                    let Some(entry) = CompactMerge::try_read_entry(&raw, raw.len(), &mut compact_pos) else {
                         break;
                     };
                     let payload_offset = compact_pos;
                     compact_pos += entry.payload_length;
                     if entry.is_raw_packet {
-                        let inner = NetPacket::from_bytes(raw[payload_offset..payload_offset + entry.payload_length].to_vec());
+                        let inner = NetPacket::from_slice(&raw[payload_offset..payload_offset + entry.payload_length]);
                         if !inner.verify() {
                             break;
                         }
                         self.process_packet(inner);
                         continue;
                     }
-                    let mut unreliable = NetPacket::with_size(NetConstants::UNRELIABLE_HEADER_SIZE + entry.payload_length);
-                    unreliable.set_property(PacketProperty::Unreliable);
-                    unreliable.set_connection_number(self.connection_num());
-                    unreliable.raw_mut()[1] = entry.channel;
-                    unreliable.raw_mut()[NetConstants::UNRELIABLE_HEADER_SIZE..].copy_from_slice(&raw[payload_offset..payload_offset + entry.payload_length]);
-                    manager.create_receive_event(unreliable, DeliveryMethod::Unreliable, entry.channel, NetConstants::UNRELIABLE_HEADER_SIZE, self);
+                    manager.create_receive_event_view(
+                        raw.clone(),
+                        payload_offset,
+                        payload_offset + entry.payload_length,
+                        DeliveryMethod::Unreliable,
+                        entry.channel,
+                        self,
+                    );
                 }
             }
             // If we get ping, send pong
@@ -1094,9 +1108,12 @@ impl LnlPeer {
                     return;
                 }
                 let is_ack = packet.property() == Some(PacketProperty::Ack);
-                let mut deliver: Vec<(DeliveryMethod, NetPacket)> = Vec::new();
+                let mut deliver = DELIVER_SCRATCH.take();
                 let outcome = self.with_channel(idx, !is_ack, |c| c.process_packet(packet, &mut deliver));
-                let Some(outcome) = outcome else { return };
+                let Some(outcome) = outcome else {
+                    DELIVER_SCRATCH.set(deliver);
+                    return;
+                };
                 if outcome.request_send {
                     self.add_to_reliable_channel_send_queue(idx);
                 }
@@ -1105,13 +1122,14 @@ impl LnlPeer {
                     manager.add_packet_loss(i64::from(outcome.packet_loss));
                 }
                 let sequenced = matches!(idx % NetConstants::CHANNEL_TYPE_COUNT, 1 | 3);
-                for (method, delivered) in deliver {
+                for (method, delivered) in deliver.drain(..) {
                     if sequenced {
                         manager.create_receive_event(delivered, method, (idx / NetConstants::CHANNEL_TYPE_COUNT) as u8, NetConstants::CHANNELED_HEADER_SIZE, self);
                     } else {
                         self.add_reliable_packet(&manager, method, delivered);
                     }
                 }
+                DELIVER_SCRATCH.set(deliver);
             }
             // Simple packet without acks
             Some(PacketProperty::Unreliable) => {

@@ -8,11 +8,25 @@ C#: `Basis Server/BasisNetworkCore/Pooling/` · Rust: `basis_server/basis_networ
 | --- | --- | --- | --- |
 | `BasisByteArrayPooling.cs` | `basis_byte_array_pooling.rs` | 51 → 35 | faithful |
 | `ThreadSafeMessagePool.cs` | `thread_safe_message_pool.rs` | 23 → 34 | deviates |
-| — | `mod.rs` | — → 5 | extended (Rust module wiring, no C# analogue) |
+| — | `packet_buffer_pool.rs` | — → ~560 | extended (see below) |
+| — | `mod.rs` | — → 7 | extended (Rust module wiring, no C# analogue) |
 
 Both pools exist in Rust with the same member set (`rent`/`return`/`clear`, and `rent`/`return`).
 `BasisObjectPool<T>`, which the Rust pooling test file also covers, lives in `compression/` on both
 sides and is outside this file map.
+
+## Added on the `pooling` branch (2026-08-29)
+
+`packet_buffer_pool.rs` is new infrastructure with no C# analogue in this folder — its C#
+counterpart in spirit is LiteNetLib's `NetManager.PacketPool.cs` (see
+`transportportdiffs.md` §"No packet pool", now resolved). A process-wide, two-level
+(thread-local stack over lock-free shards), hard-bounded (16 MB) pool of 2048-byte buffers
+that every transport packet path rents from and recycles into; `#![forbid(unsafe_code)]`,
+every rent zeroed-or-fully-copied by construction. Measurements and the safety argument:
+`benchmarks/results/2026-08-29-pooling/README.md`. Unlike the two ported pools above it is
+wired into production code (both transports and `NetPacket` itself). The stale-data-hygiene
+corner recorded below for `BasisByteArrayPooling` does **not** apply to it — zeroing is part
+of its rent contract and pinned by tests.
 
 ## Deviations
 

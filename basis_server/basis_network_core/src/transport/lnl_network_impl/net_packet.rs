@@ -5,6 +5,10 @@
 //! property. The layout is the wire contract with every existing C# client, so the accessors
 //! below are the only place it is spelled out.
 
+use bytes::Bytes;
+
+use crate::pooling::packet_buffer_pool::{PacketBufferPool, PooledBytes};
+
 use super::net_constants::NetConstants;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -74,10 +78,12 @@ impl PacketProperty {
     }
 }
 
-/// A packet is its bytes; `size()` is what LiteNetLib called `Size`.
+/// A packet is its bytes; `size()` is what LiteNetLib called `Size`. The bytes live in a
+/// [`PooledBytes`] so the constructors the hot paths use recycle through the
+/// [`PacketBufferPool`] instead of allocating per packet (cloning rents a pooled copy too).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetPacket {
-    data: Vec<u8>,
+    data: PooledBytes,
 }
 
 impl NetPacket {
@@ -86,7 +92,7 @@ impl NetPacket {
     const FRAGMENTED_BIT: u8 = 0x80;
 
     pub fn with_size(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self { data: PacketBufferPool::rent_zeroed(size) }
     }
 
     /// A packet of `property` with room for `payload_size` bytes after the header.
@@ -96,8 +102,25 @@ impl NetPacket {
         packet
     }
 
+    /// A packet of `property` built as `header_size() + extra_header` zeroed header bytes
+    /// followed by a copy of `payload` — the shape of every outgoing packet, renting from the
+    /// pool and writing each byte once (`extra_header` is the fragment header when present).
+    pub fn with_payload(property: PacketProperty, extra_header: usize, payload: &[u8]) -> Self {
+        let mut packet = Self { data: PacketBufferPool::rent_frame(property.header_size() + extra_header, payload) };
+        packet.set_property(property);
+        packet
+    }
+
+    /// Adopts an exact `Vec` (unpooled). Tests and cold paths; the hot paths use
+    /// [`from_slice`](Self::from_slice) so the buffer recycles.
     pub fn from_bytes(data: Vec<u8>) -> Self {
-        Self { data }
+        Self { data: PooledBytes::from(data) }
+    }
+
+    /// A pooled copy of `data`: the receive path's constructor — one recycled buffer per
+    /// datagram or merged entry instead of one allocation.
+    pub fn from_slice(data: &[u8]) -> Self {
+        Self { data: PacketBufferPool::rent_copy(data) }
     }
 
     pub fn size(&self) -> usize {
@@ -112,8 +135,15 @@ impl NetPacket {
         &mut self.data
     }
 
+    /// The bytes as a plain `Vec`, leaving the recycling cycle.
     pub fn into_bytes(self) -> Vec<u8> {
-        self.data
+        self.data.into_vec()
+    }
+
+    /// The bytes as reference-counted [`Bytes`] for delivery to the application; a pooled
+    /// buffer returns to the pool when the last clone is dropped.
+    pub fn into_shared(self) -> Bytes {
+        Bytes::from(self.data)
     }
 
     /// Shrinks the packet to `size` bytes (never grows it).

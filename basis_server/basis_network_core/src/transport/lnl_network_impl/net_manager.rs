@@ -24,6 +24,7 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use basis_error::{BasisError, BasisResult, ErrorCode, FaultKind};
+use bytes::Bytes;
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex, RwLock};
 use tokio::net::UdpSocket;
@@ -262,7 +263,14 @@ impl ManagerInner {
 
     pub(super) fn create_receive_event(&self, packet: NetPacket, method: DeliveryMethod, channel: u8, header_size: usize, peer: &Arc<LnlPeer>) {
         let size = packet.size();
-        let reader = NetPacketReader::with_offset(packet.into_bytes(), header_size, size);
+        self.create_receive_event_view(packet.into_shared(), header_size, size, method, channel, peer);
+    }
+
+    /// Raises a receive event over a zero-copy view of `data` (`offset..size`). The
+    /// CompactMerged decode delivers every unreliable entry as a view of the one datagram
+    /// buffer, which returns to the pool when the application drops its last reader.
+    pub(super) fn create_receive_event_view(&self, data: Bytes, offset: usize, size: usize, method: DeliveryMethod, channel: u8, peer: &Arc<LnlPeer>) {
+        let reader = NetPacketReader::with_offset(data, offset, size);
         self.listener.raise_network_receive(Arc::new(super::LnlNetPeer::new(peer.clone())), reader, channel, method);
     }
 
@@ -282,7 +290,7 @@ impl ManagerInner {
         let additional_data = match event_data {
             Some(packet) => {
                 let (header, size) = (packet.header_size(), packet.size());
-                NetPacketReader::with_offset(packet.into_bytes(), header, size)
+                NetPacketReader::with_offset(packet.into_shared(), header, size)
             }
             None => NetPacketReader::new(Vec::new()),
         };
@@ -334,7 +342,7 @@ impl ManagerInner {
             self.packets_received.fetch_add(1, Ordering::Relaxed);
             self.bytes_received.fetch_add(data.len() as i64, Ordering::Relaxed);
         }
-        let packet = NetPacket::from_bytes(data.to_vec());
+        let packet = NetPacket::from_slice(data);
         if !packet.verify() {
             NetDebug::write(NetLogLevel::Error, "[NM] DataReceived: bad!");
             return;
@@ -352,7 +360,7 @@ impl ManagerInner {
             Some(PacketProperty::UnconnectedMessage) => {
                 if self.settings.unconnected_messages_enabled {
                     let size = packet.size();
-                    let reader = NetPacketReader::with_offset(packet.into_bytes(), NetConstants::HEADER_SIZE, size);
+                    let reader = NetPacketReader::with_offset(packet.into_shared(), NetConstants::HEADER_SIZE, size);
                     self.listener.raise_network_receive_unconnected(remote, reader);
                 }
                 return;

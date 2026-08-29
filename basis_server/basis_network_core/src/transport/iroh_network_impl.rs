@@ -59,6 +59,7 @@ use basis_error::{BasisError, BasisResult, ErrorCode, FaultKind};
 use crate::BNL;
 use crate::configuration::{BasisPopulationScale, BasisTransportConfigStore, Configuration, IrohTransportConfig};
 use crate::io::{NetDataReader, NetDataWriter, NetPacketReader};
+use crate::pooling::packet_buffer_pool::PacketBufferPool;
 use crate::protocol::BasisNetworkCommons;
 
 use super::basis_network_shell::*;
@@ -261,7 +262,7 @@ impl IrohNetPeer {
             // watchdog disconnects it if the queue does not drain.
             return Err(SendError::QueueFull { queued, budget });
         }
-        queue.push_back(Outgoing::Reliable { channel, ordered, data: Bytes::copy_from_slice(data) });
+        queue.push_back(Outgoing::Reliable { channel, ordered, data: Bytes::from(PacketBufferPool::rent_copy(data)) });
         self.state.reliable_queued_bytes.fetch_add(data.len(), Ordering::Release);
         drop(queue);
         self.state.notify.notify_one();
@@ -270,7 +271,10 @@ impl IrohNetPeer {
 
     fn enqueue_unreliable(&self, channel: u8, sequenced: bool, data: &[u8]) {
         let Some(manager) = self.manager() else { return };
-        let mut frame = BytesMut::with_capacity(data.len() + 3);
+        // One pooled buffer per datagram: the header prefix is stamped in place and the whole
+        // frame rides as refcounted `Bytes`, returning to the pool once quinn has sent it.
+        let prefix = if sequenced { 3 } else { 1 };
+        let mut frame = PacketBufferPool::rent_frame(prefix, data);
         if sequenced {
             let seq = self
                 .state
@@ -278,13 +282,14 @@ impl IrohNetPeer {
                 .get(usize::from(channel))
                 .map(|c| c.fetch_add(1, Ordering::Relaxed) as u16)
                 .unwrap_or(0);
-            frame.extend_from_slice(&[channel | DATAGRAM_SEQUENCED_FLAG]);
-            frame.extend_from_slice(&seq.to_le_bytes());
-        } else {
-            frame.extend_from_slice(&[channel]);
+            if let Some(header) = frame.get_mut(0..3) {
+                header[0] = channel | DATAGRAM_SEQUENCED_FLAG;
+                header[1..3].copy_from_slice(&seq.to_le_bytes());
+            }
+        } else if let Some(first) = frame.first_mut() {
+            *first = channel;
         }
-        frame.extend_from_slice(data);
-        let frame = frame.freeze();
+        let frame = Bytes::from(frame);
 
         let priority = manager.priority_channels.get(usize::from(channel)).copied().unwrap_or(false);
         let (queue, limit, dropped) = if priority {
@@ -1430,7 +1435,10 @@ impl ManagerInner {
                 state.conn.close(VarInt::from_u32(CLOSE_PROTOCOL), b"frame too large");
                 return;
             }
-            let mut payload = vec![0u8; len];
+            // Pooled and handed to the reader as shared `Bytes`, recycling when the handler is
+            // done. Zeroed on rent — a bounded memset the stream read then overwrites — so the
+            // pool never exposes an API that could return another connection's stale bytes.
+            let mut payload = PacketBufferPool::rent_zeroed(len);
             if rx.read_exact(&mut payload).await.is_err() {
                 return;
             }
@@ -1897,7 +1905,7 @@ impl NetPeer for PendingPeer {
                     self.shared.early.lock().push_back(Outgoing::Reliable {
                         channel: channel_number,
                         ordered: delivery_method != DeliveryMethod::ReliableUnordered,
-                        data: Bytes::copy_from_slice(data),
+                        data: Bytes::from(PacketBufferPool::rent_copy(data)),
                     });
                 }
                 Ok(())

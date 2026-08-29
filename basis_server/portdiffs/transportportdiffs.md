@@ -49,7 +49,7 @@ Sections below treat it as Rust-only, per the brief, and describe the C#-side ga
 | `Layers/*.cs` + `Utils/CRC32C.cs` | — | 267→0 | not ported |
 | `Utils/NtpPacket.cs` + `Utils/NtpRequest.cs` | — | 465→0 | not ported |
 | `NativeSocket.cs` | — | 549→0 | not ported |
-| `NetManager.PacketPool.cs` + `PooledPacket.cs` | — | 394→0 | not ported |
+| `NetManager.PacketPool.cs` + `PooledPacket.cs` | `crate::pooling::packet_buffer_pool` (outside this module) | 394→~560 | replaced (see Deviations §2) |
 | `Utils/NetSerializer.cs` + `Utils/NetPacketProcessor.cs` | — | 1058→0 | not ported |
 | `PausedSocketFix.cs` | — | 67→0 | not ported |
 | `Trimming.cs`, `Utils/Preserve.cs`, `Utils/INetSerializable.cs` | — | 32→0 | not applicable |
@@ -269,14 +269,20 @@ compared field by field:
    of one per partition. Pure throughput cost at high player counts; nothing a client can observe
    except through added latency under load.
 
-2. **No packet pool.** `NetManager.PacketPool.cs` (362 lines of striped, cache-line-padded pooling,
-   written specifically because `PoolGetPacket` profiled at 21.6% of server CPU) has no Rust
-   counterpart — every packet is a fresh `Vec<u8>` (`net_packet.rs:88-90`), and `AutoRecycle`,
-   `PacketPoolSize`, `PacketPoolSizePerPeer`, `PacketPoolSizeMax` and `ResolvePacketPoolMax`
-   (`LNLNetworkImpl.cs:231,247,256-257`) are read from config and ignored. `recycle_queued_packets`
-   (`net_peer.rs:846`) just clears the queues. Allocation cost, not behaviour; Rust's allocator is
-   not .NET's `ConcurrentQueue`, so this may well be the right call — but it was not measured here
-   and the C# comment says the C# version was.
+2. **Packet pooling — resolved on the `pooling` branch (2026-08-29).** LiteNetLib's
+   `NetManager.PacketPool.cs` (362 lines of striped, cache-line-padded pooling, written because
+   `PoolGetPacket` profiled at 21.6% of server CPU) originally had no Rust counterpart — every
+   packet was a fresh `Vec<u8>`. It now does: `NetPacket` is backed by
+   `crate::pooling::packet_buffer_pool` (a process-wide, two-level, hard-bounded 16 MB pool of
+   MTU-class buffers, `#![forbid(unsafe_code)]`, shared with the iroh transport), measured in
+   `benchmarks/results/2026-08-29-pooling/README.md` — send builds allocation-free, a merged
+   datagram delivered from one buffer, 1.2–1.8× faster at MTU-sized shapes. Differences from the
+   C# design, deliberately: one fixed 2048-byte capacity class instead of per-size striping (the
+   MTU bounds every datagram shape), recycling by ownership (`Drop`) instead of explicit
+   `Recycle` calls, and delivery held open by `Bytes` refcounts instead of `AutoRecycle`. The
+   config fields `AutoRecycle`, `PacketPoolSize`, `PacketPoolSizePerPeer`, `PacketPoolSizeMax`
+   and `ResolvePacketPoolMax` (`LNLNetworkImpl.cs:231,247,256-257`) remain read-and-ignored: the
+   pool's bound is a compile-time constant, which is the robust end of that trade.
 
 3. **No native sockets.** `NativeSocket.cs` (549 lines) is not ported; `UseNativeSockets`
    (`LNLNetworkImpl.cs:216`) is ignored. Tokio's `UdpSocket` replaces it. No observable difference.

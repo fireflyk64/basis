@@ -25,6 +25,7 @@ rayon.workspace = true
 socket2.workspace = true
 arc-swap.workspace = true
 crossbeam-channel.workspace = true
+crossbeam-queue.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 quick-xml.workspace = true
@@ -40,6 +41,15 @@ sysinfo.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 rstest.workspace = true
 serial_test.workspace = true
 tempfile.workspace = true
+
+[[bench]]
+name = "packet_pooling"
+harness = false
+
+[[bench]]
+name = "allocations_per_packet"
+harness = false
