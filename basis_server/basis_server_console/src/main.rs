@@ -11,6 +11,8 @@ mod basis_console_commands;
 mod basis_console_driver;
 mod basis_first_boot_tuning;
 mod basis_setup_wizard;
+#[cfg(feature = "pprof")]
+mod basis_pprof_probe;
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -119,6 +121,8 @@ fn main() -> ExitCode {
     }
 
     BNL::log("Server Booting");
+    #[cfg(feature = "pprof")]
+    basis_pprof_probe::arm_from_env();
     let mut check = match BasisNetworkHealthCheck::new(&config) {
         Ok(check) => Some(check),
         Err(e) => {

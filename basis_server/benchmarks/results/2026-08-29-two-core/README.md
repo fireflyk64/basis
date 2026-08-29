@@ -248,3 +248,5 @@ Re-validation with the reverted transport, same box and harness, all-iroh and le
 Within noise of the coalesced numbers, confirming the framing carried no weight. The iroh cost
 remains inside quinn's per-connection processing; the plan in §4 (many-core run, `perf` profile)
 is unchanged, now against a simpler transport.
+
+**2026-08-29, later:** the profile in item 2 exists — `../2026-08-29-iroh-profile/` samples the server from inside (SIGPROF; perf_event is blocked here even for root). Headline: the gap is noq (quinn-fork) per-packet transmit cycles + allocator churn + ACK traffic; crypto is 5%, ack/cc 0.2%. The revised swings live in that README.

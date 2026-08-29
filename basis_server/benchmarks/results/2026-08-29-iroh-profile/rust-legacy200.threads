@@ -1,0 +1,5 @@
+total_samples 1023
+thread bsr-send-0 616
+thread basis-lnl-logic 257
+thread basis-iroh 127
+thread BSR-TickLoop 23

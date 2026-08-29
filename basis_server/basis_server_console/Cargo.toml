@@ -21,3 +21,7 @@ parking_lot.workspace = true
 num_cpus.workspace = true
 libc.workspace = true
 sysinfo.workspace = true
+pprof = { version = "0.15.0", features = ["flamegraph"], optional = true }
+
+[features]
+pprof = ["dep:pprof"]

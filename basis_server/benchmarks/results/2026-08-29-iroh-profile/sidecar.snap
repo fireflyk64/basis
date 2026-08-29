@@ -1,0 +1,1188 @@
+=== 19:30:08 pid=207395
+STAT 220 78 0 0
+Threads:	14
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	7
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 114370530 197458 1660624 116749918 1660624 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 0
+T basis-pprof 0 0
+T basis-iroh 48 16
+T BSR-TickLoop 5 1
+T basis-lnl-peers 0 0
+T basis-lnl-logic 50 54
+T basis-iroh 0 0
+T JoinBroadcast 1 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 112 5
+T basis-iroh 0 0
+T basis-iroh 0 0
+=== 19:30:16 pid=207395
+STAT 451 174 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	7
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 114602625 197458 1660624 116981805 1660624 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 0
+T basis-pprof 0 0
+T basis-iroh 84 34
+T BSR-TickLoop 10 3
+T basis-lnl-peers 0 0
+T basis-lnl-logic 115 128
+T JoinBroadcast 1 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 235 7
+=== 19:30:25 pid=207395
+STAT 689 272 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	7
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 114830351 197458 1660624 117209715 1660624 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 0
+T basis-pprof 0 0
+T basis-iroh 120 54
+T BSR-TickLoop 17 5
+T basis-lnl-peers 0 0
+T basis-lnl-logic 180 200
+T JoinBroadcast 1 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 365 11
+=== 19:30:34 pid=207395
+STAT 915 362 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	7
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 115055879 197459 1660624 117435070 1660624 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 1
+T basis-pprof 0 0
+T basis-iroh 157 70
+T BSR-TickLoop 23 7
+T basis-lnl-peers 0 0
+T basis-lnl-logic 244 269
+T JoinBroadcast 1 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 484 14
+=== 19:30:42 pid=207395
+STAT 1140 461 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	7
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 115282092 197459 1660624 117661481 1660624 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 1
+T basis-pprof 0 0
+T basis-iroh 192 91
+T BSR-TickLoop 30 9
+T basis-lnl-peers 0 0
+T basis-lnl-logic 306 343
+T JoinBroadcast 1 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 604 16
+=== 19:30:51 pid=207395
+STAT 1367 556 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	7
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 115507936 197459 1660624 117887405 1660624 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 1
+T basis-pprof 0 0
+T basis-iroh 226 110
+T BSR-TickLoop 37 10
+T basis-lnl-peers 0 0
+T basis-lnl-logic 370 415
+T JoinBroadcast 2 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 725 19
+=== 19:31:00 pid=207395
+STAT 1598 651 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	7
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 115730404 197460 1660624 118109724 1660624 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 1
+T basis-pprof 0 0
+T basis-iroh 263 129
+T BSR-TickLoop 43 12
+T basis-lnl-peers 0 0
+T basis-lnl-logic 435 486
+T JoinBroadcast 2 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 848 21
+=== 19:31:08 pid=207395
+STAT 1824 740 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	7
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 115952069 197460 1660624 118331463 1660624 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 2 1
+T basis-pprof 0 0
+T basis-iroh 297 147
+T BSR-TickLoop 49 14
+T basis-lnl-peers 0 0
+T basis-lnl-logic 502 554
+T JoinBroadcast 2 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 965 24
+=== 19:31:17 pid=207395
+STAT 2047 835 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	7
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 116175230 197460 1660624 118554752 1660624 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 2 2
+T basis-pprof 0 0
+T basis-iroh 331 166
+T BSR-TickLoop 55 15
+T basis-lnl-peers 0 0
+T basis-lnl-logic 567 625
+T JoinBroadcast 2 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 1081 28
+sidecar done 19:32:09
+=== 19:32:53 pid=213789
+STAT 1514 412 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	1
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 117295295 201668 1661250 119695291 1661250 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 1063 384
+T BSR-TickLoop 29 5
+T basis-lnl-peers 0 0
+T basis-lnl-logic 3 6
+T JoinBroadcast 3 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 415 12
+=== 19:33:02 pid=213789
+STAT 2034 554 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	1
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 117652521 204977 1661250 120054256 1661250 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 1
+T basis-pprof 0 0
+T basis-iroh 1439 518
+T BSR-TickLoop 40 6
+T basis-lnl-peers 0 0
+T basis-lnl-logic 5 8
+T JoinBroadcast 3 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 547 17
+=== 19:33:11 pid=213789
+STAT 2478 683 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	1
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 118004387 204977 1661269 120406100 1661269 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 2
+T basis-pprof 0 0
+T basis-iroh 1752 640
+T BSR-TickLoop 49 6
+T basis-lnl-peers 0 0
+T basis-lnl-logic 5 11
+T JoinBroadcast 3 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 669 20
+=== 19:33:20 pid=213789
+STAT 2868 795 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	1
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 118276974 205099 1661269 120679935 1661269 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 2
+T basis-pprof 0 0
+T basis-iroh 2025 745
+T BSR-TickLoop 56 7
+T basis-lnl-peers 0 0
+T basis-lnl-logic 6 12
+T JoinBroadcast 3 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 776 23
+=== 19:33:29 pid=213789
+STAT 3189 908 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	1
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 118536369 205111 1661269 120945689 1661269 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 2
+T basis-pprof 0 0
+T basis-iroh 2261 850
+T BSR-TickLoop 60 9
+T basis-lnl-peers 0 0
+T basis-lnl-logic 6 15
+T JoinBroadcast 3 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 856 27
+=== 19:33:38 pid=213789
+STAT 3597 1045 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	1
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 118902752 205119 1661462 121312924 1661462 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 3
+T basis-pprof 0 0
+T basis-iroh 2583 978
+T BSR-TickLoop 65 11
+T basis-lnl-peers 0 0
+T basis-lnl-logic 7 17
+T JoinBroadcast 4 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 938 31
+=== 19:33:47 pid=213789
+STAT 4026 1198 0 0
+Threads:	12
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	1
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 119292848 205241 1661462 121704472 1661462 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 3
+T basis-pprof 0 0
+T basis-iroh 2930 1122
+T BSR-TickLoop 69 12
+T basis-lnl-peers 0 0
+T basis-lnl-logic 8 19
+T JoinBroadcast 4 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 1015 34
+T basis-iroh 0 0
+=== 19:33:56 pid=213789
+STAT 4078 1218 0 0
+Threads:	12
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	1
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 119319192 205246 1661462 121729218 1661462 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 4
+T basis-pprof 0 0
+T basis-iroh 2962 1137
+T BSR-TickLoop 70 13
+T basis-lnl-peers 0 0
+T basis-lnl-logic 11 23
+T JoinBroadcast 4 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 1026 35
+T basis-iroh 0 0
+=== 19:35:43 pid=223576
+STAT 17 5 0 0
+Threads:	12
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 119324415 205280 1661462 121734774 1661462 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 0
+T basis-pprof 0 0
+T basis-iroh 15 3
+T BSR-TickLoop 0 0
+T basis-lnl-peers 0 0
+T basis-lnl-logic 0 0
+T basis-iroh 0 0
+T JoinBroadcast 0 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 1 0
+=== 19:35:52 pid=223576
+STAT 508 122 0 0
+Threads:	15
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 119543552 205289 1661670 121968070 1661670 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 363 109
+T BSR-TickLoop 8 1
+T basis-lnl-peers 0 0
+T basis-lnl-logic 2 2
+T basis-iroh 0 0
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 136 4
+T basis-iroh 0 0
+T basis-iroh 0 0
+T basis-iroh 0 0
+=== 19:35:53 pid=223576
+STAT 546 130 0 0
+Threads:	15
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 119562473 205289 1661670 121987392 1661670 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 388 116
+T BSR-TickLoop 9 1
+T basis-lnl-peers 0 0
+T basis-lnl-logic 2 2
+T basis-iroh 0 0
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 147 4
+T basis-iroh 0 0
+T basis-iroh 0 0
+T basis-iroh 0 0
+=== 19:36:01 pid=223576
+STAT 972 241 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 119884436 208700 1661670 122309319 1661670 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 677 221
+T BSR-TickLoop 19 2
+T basis-lnl-peers 0 0
+T basis-lnl-logic 2 4
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 273 7
+=== 19:36:02 pid=223576
+STAT 1015 251 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 119913470 208700 1661670 122338298 1661670 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 707 229
+T BSR-TickLoop 20 2
+T basis-lnl-peers 0 0
+T basis-lnl-logic 2 4
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 286 7
+=== 19:36:10 pid=223576
+STAT 1454 371 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 120232824 208781 1661670 122659692 1661670 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 2
+T basis-pprof 0 0
+T basis-iroh 1010 342
+T BSR-TickLoop 28 4
+T basis-lnl-peers 0 0
+T basis-lnl-logic 3 6
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 413 10
+=== 19:36:11 pid=223576
+STAT 1484 378 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 120245483 208792 1661670 122673340 1661670 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 2
+T basis-pprof 0 0
+T basis-iroh 1030 348
+T BSR-TickLoop 29 4
+T basis-lnl-peers 0 0
+T basis-lnl-logic 3 6
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 422 10
+=== 19:36:19 pid=223576
+STAT 1935 487 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 120539099 211561 1661736 122971236 1661736 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 2
+T basis-pprof 0 0
+T basis-iroh 1352 450
+T BSR-TickLoop 39 5
+T basis-lnl-peers 0 0
+T basis-lnl-logic 5 8
+T JoinBroadcast 3 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 541 13
+=== 19:36:20 pid=223576
+STAT 1977 497 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 120562520 211561 1661796 122993077 1661796 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 2
+T basis-pprof 0 0
+T basis-iroh 1380 460
+T BSR-TickLoop 40 5
+T basis-lnl-peers 0 0
+T basis-lnl-logic 5 8
+T JoinBroadcast 3 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 553 14
+=== 19:36:28 pid=223576
+STAT 2385 616 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 120886253 211561 1662135 123317035 1662135 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 2
+T basis-pprof 7 5
+T basis-iroh 1665 566
+T BSR-TickLoop 47 6
+T basis-lnl-peers 0 0
+T basis-lnl-logic 6 10
+T JoinBroadcast 3 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 661 17
+=== 19:36:29 pid=223576
+STAT 2424 624 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 120912454 211561 1662135 123343127 1662135 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 2
+T basis-pprof 7 5
+T basis-iroh 1691 574
+T BSR-TickLoop 49 6
+T basis-lnl-peers 0 0
+T basis-lnl-logic 6 10
+T JoinBroadcast 3 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 671 17
+=== 19:36:37 pid=223576
+STAT 2800 730 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 121183116 211690 1662135 123615768 1662135 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 3
+T basis-pprof 7 5
+T basis-iroh 1950 674
+T BSR-TickLoop 55 8
+T basis-lnl-peers 0 0
+T basis-lnl-logic 7 12
+T JoinBroadcast 3 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 780 20
+=== 19:36:38 pid=223576
+STAT 2823 739 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 121195452 211693 1662135 123629388 1662135 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 3
+T basis-pprof 7 5
+T basis-iroh 1966 682
+T BSR-TickLoop 56 8
+T basis-lnl-peers 0 0
+T basis-lnl-logic 7 12
+T JoinBroadcast 3 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 787 21
+=== 19:36:46 pid=223576
+STAT 3166 832 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 121464640 211729 1662135 123897274 1662135 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 3
+T basis-pprof 7 5
+T basis-iroh 2214 770
+T BSR-TickLoop 61 8
+T basis-lnl-peers 0 0
+T basis-lnl-logic 8 14
+T JoinBroadcast 3 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 875 23
+=== 19:36:46 pid=223576
+STAT 3202 842 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 121494189 211729 1662135 123926855 1662135 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 3
+T basis-pprof 7 5
+T basis-iroh 2240 780
+T BSR-TickLoop 62 8
+T basis-lnl-peers 0 0
+T basis-lnl-logic 8 14
+T JoinBroadcast 3 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 884 24
+=== 19:36:54 pid=223576
+STAT 3549 953 0 0
+Threads:	10
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 121783351 211729 1662135 124216036 1662135 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 3
+T basis-iroh 2475 871
+T BSR-TickLoop 67 10
+T basis-lnl-peers 0 0
+T basis-lnl-logic 8 16
+T JoinBroadcast 3 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 968 27
+=== 19:36:55 pid=223576
+STAT 3583 961 0 0
+Threads:	10
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 121809266 211729 1662135 124241903 1662135 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 3
+T basis-iroh 2499 878
+T BSR-TickLoop 67 10
+T basis-lnl-peers 0 0
+T basis-lnl-logic 8 16
+T JoinBroadcast 3 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 977 27
+=== 19:37:03 pid=223576
+STAT 3911 1058 0 0
+Threads:	10
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 122087900 211888 1662135 124521307 1662135 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 4
+T basis-iroh 2734 970
+T BSR-TickLoop 72 11
+T basis-lnl-peers 0 0
+T basis-lnl-logic 9 18
+T JoinBroadcast 3 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 1064 30
+=== 19:37:04 pid=223576
+STAT 3944 1067 0 0
+Threads:	10
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 122101368 211889 1662135 124534818 1662135 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 4
+T basis-iroh 2756 978
+T BSR-TickLoop 73 11
+T basis-lnl-peers 0 0
+T basis-lnl-logic 9 19
+T JoinBroadcast 3 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 1074 30
+=== 19:37:12 pid=223576
+STAT 4066 1107 0 0
+Threads:	10
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 122196225 211919 1662152 124628837 1662152 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 4
+T basis-iroh 2841 1013
+T BSR-TickLoop 76 11
+T basis-lnl-peers 0 0
+T basis-lnl-logic 11 23
+T JoinBroadcast 3 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 1103 31
+=== 19:37:13 pid=223576
+STAT 4067 1107 0 0
+Threads:	10
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	0
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 122196244 211919 1662152 124628856 1662152 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 4
+T basis-iroh 2841 1013
+T BSR-TickLoop 76 11
+T basis-lnl-peers 0 0
+T basis-lnl-logic 11 23
+T JoinBroadcast 3 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 1103 31
+=== 19:37:39 pid=234627
+STAT 197 74 0 0
+Threads:	16
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 122373510 211936 1662588 124806929 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 0
+T basis-pprof 0 0
+T basis-iroh 47 15
+T BSR-TickLoop 4 1
+T basis-lnl-peers 0 0
+T basis-lnl-logic 41 52
+T basis-iroh 0 0
+T JoinBroadcast 1 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 102 3
+T basis-iroh 0 0
+T basis-iroh 0 0
+T basis-iroh 0 0
+T basis-iroh 0 0
+=== 19:37:40 pid=234627
+STAT 218 84 0 0
+Threads:	16
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 122396028 211936 1662588 124829121 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 0
+T basis-pprof 0 0
+T basis-iroh 50 17
+T BSR-TickLoop 5 1
+T basis-lnl-peers 0 0
+T basis-lnl-logic 46 59
+T basis-iroh 0 0
+T JoinBroadcast 1 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 114 4
+T basis-iroh 0 0
+T basis-iroh 0 0
+T basis-iroh 0 0
+T basis-iroh 0 0
+=== 19:37:41 pid=234627
+STAT 258 100 0 0
+Threads:	16
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 122436969 211938 1662588 124870150 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 0
+T basis-pprof 0 0
+T basis-iroh 56 20
+T BSR-TickLoop 6 1
+T basis-lnl-peers 0 0
+T basis-lnl-logic 57 71
+T basis-iroh 0 0
+T JoinBroadcast 1 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 137 4
+T basis-iroh 0 0
+T basis-iroh 0 0
+T basis-iroh 0 0
+T basis-iroh 0 0
+=== 19:37:47 pid=234627
+STAT 413 165 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 122588550 211940 1662588 125021838 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 79 32
+T BSR-TickLoop 10 2
+T basis-lnl-peers 0 0
+T basis-lnl-logic 99 120
+T JoinBroadcast 1 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 221 6
+=== 19:37:48 pid=234627
+STAT 434 174 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 122611386 211940 1662588 125044641 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 82 34
+T BSR-TickLoop 10 3
+T basis-lnl-peers 0 0
+T basis-lnl-logic 104 127
+T JoinBroadcast 1 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 233 6
+=== 19:37:50 pid=234627
+STAT 481 193 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 122659419 211940 1662588 125092753 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 91 37
+T BSR-TickLoop 11 3
+T basis-lnl-peers 0 0
+T basis-lnl-logic 117 142
+T JoinBroadcast 1 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 259 7
+=== 19:37:56 pid=234627
+STAT 631 257 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 122810329 211940 1662588 125243544 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 112 50
+T BSR-TickLoop 15 4
+T basis-lnl-peers 0 0
+T basis-lnl-logic 159 190
+T JoinBroadcast 1 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 340 10
+=== 19:37:57 pid=234627
+STAT 653 265 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 122832487 211940 1662588 125265544 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 115 51
+T BSR-TickLoop 16 5
+T basis-lnl-peers 0 0
+T basis-lnl-logic 165 196
+T JoinBroadcast 1 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 352 10
+=== 19:37:59 pid=234627
+STAT 701 284 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 122879576 211940 1662588 125312633 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 122 55
+T BSR-TickLoop 17 5
+T basis-lnl-peers 0 0
+T basis-lnl-logic 178 210
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 378 11
+=== 19:38:05 pid=234627
+STAT 859 350 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123034784 211941 1662588 125468095 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 147 69
+T BSR-TickLoop 20 7
+T basis-lnl-peers 0 0
+T basis-lnl-logic 223 259
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 462 13
+=== 19:38:06 pid=234627
+STAT 879 358 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123056566 211941 1662588 125489902 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 150 71
+T BSR-TickLoop 21 7
+T basis-lnl-peers 0 0
+T basis-lnl-logic 228 265
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 473 13
+=== 19:38:07 pid=234627
+STAT 925 378 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123104623 211941 1662588 125538086 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 0 0
+T basis-iroh 157 74
+T BSR-TickLoop 22 7
+T basis-lnl-peers 0 0
+T basis-lnl-logic 241 280
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 498 13
+=== 19:38:13 pid=234627
+STAT 1090 448 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123270931 211941 1662588 125704189 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 5 6
+T basis-iroh 184 87
+T BSR-TickLoop 26 8
+T basis-lnl-peers 0 0
+T basis-lnl-logic 287 328
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 581 15
+=== 19:38:14 pid=234627
+STAT 1111 454 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123289889 211941 1662588 125723052 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 1
+T basis-pprof 5 6
+T basis-iroh 187 88
+T BSR-TickLoop 27 8
+T basis-lnl-peers 0 0
+T basis-lnl-logic 293 333
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 591 15
+=== 19:38:16 pid=234627
+STAT 1157 472 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123335066 211941 1662588 125768357 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 2
+T basis-pprof 5 6
+T basis-iroh 193 93
+T BSR-TickLoop 28 9
+T basis-lnl-peers 0 0
+T basis-lnl-logic 306 346
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 616 16
+=== 19:38:22 pid=234627
+STAT 1309 541 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123492601 211941 1662588 125925836 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 2
+T basis-pprof 5 6
+T basis-iroh 214 109
+T BSR-TickLoop 32 10
+T basis-lnl-peers 0 0
+T basis-lnl-logic 348 396
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 700 18
+=== 19:38:23 pid=234627
+STAT 1328 548 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123513065 211941 1662588 125946224 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 2
+T basis-pprof 5 6
+T basis-iroh 217 111
+T BSR-TickLoop 32 10
+T basis-lnl-peers 0 0
+T basis-lnl-logic 353 402
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 710 18
+=== 19:38:25 pid=234627
+STAT 1373 567 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123560691 211941 1662588 125994040 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 2
+T basis-pprof 5 6
+T basis-iroh 224 115
+T BSR-TickLoop 34 10
+T basis-lnl-peers 0 0
+T basis-lnl-logic 365 417
+T JoinBroadcast 2 0
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 735 18
+=== 19:38:31 pid=234627
+STAT 1536 635 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123719143 211944 1662588 126152411 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 2
+T basis-pprof 5 6
+T basis-iroh 250 129
+T BSR-TickLoop 38 11
+T basis-lnl-peers 0 0
+T basis-lnl-logic 412 467
+T JoinBroadcast 2 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 821 20
+=== 19:38:32 pid=234627
+STAT 1554 644 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123736607 211944 1662588 126169873 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 0 2
+T basis-pprof 5 6
+T basis-iroh 252 131
+T BSR-TickLoop 39 11
+T basis-lnl-peers 0 0
+T basis-lnl-logic 416 473
+T JoinBroadcast 2 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 832 20
+=== 19:38:33 pid=234627
+STAT 1602 662 0 0
+Threads:	11
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123781779 211944 1662588 126214974 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 2
+T basis-pprof 5 6
+T basis-iroh 260 135
+T BSR-TickLoop 39 12
+T basis-lnl-peers 0 0
+T basis-lnl-logic 430 487
+T JoinBroadcast 2 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 857 21
+=== 19:38:40 pid=234627
+STAT 1772 737 0 0
+Threads:	10
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123946302 211944 1662588 126379687 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 2
+T basis-iroh 284 150
+T BSR-TickLoop 44 13
+T basis-lnl-peers 0 0
+T basis-lnl-logic 476 537
+T JoinBroadcast 2 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 942 23
+=== 19:38:40 pid=234627
+STAT 1788 744 0 0
+Threads:	10
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 123963288 211944 1662588 126396528 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 2
+T basis-iroh 286 152
+T BSR-TickLoop 44 13
+T basis-lnl-peers 0 0
+T basis-lnl-logic 480 542
+T JoinBroadcast 2 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 951 23
+=== 19:38:42 pid=234627
+STAT 1836 764 0 0
+Threads:	10
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 124011909 211944 1662588 126445426 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 2
+T basis-iroh 293 156
+T BSR-TickLoop 45 14
+T basis-lnl-peers 0 0
+T basis-lnl-logic 493 557
+T JoinBroadcast 2 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 977 24
+=== 19:38:48 pid=234627
+STAT 1996 834 0 0
+Threads:	10
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 124176575 211944 1662588 126609801 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 2
+T basis-iroh 317 172
+T BSR-TickLoop 49 15
+T basis-lnl-peers 0 0
+T basis-lnl-logic 539 609
+T JoinBroadcast 2 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 1062 25
+=== 19:38:49 pid=234627
+STAT 2012 840 0 0
+Threads:	10
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 124193374 211944 1662588 126626648 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 2
+T basis-iroh 320 173
+T BSR-TickLoop 50 15
+T basis-lnl-peers 0 0
+T basis-lnl-logic 543 613
+T JoinBroadcast 2 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 1071 25
+=== 19:38:51 pid=234627
+STAT 2067 861 0 0
+Threads:	10
+voluntary_ctxt_switches:	3
+nonvoluntary_ctxt_switches:	2
+Udp: InDatagrams NoPorts InErrors OutDatagrams RcvbufErrors SndbufErrors InCsumErrors IgnoredMulti MemErrors
+Udp: 124243738 211944 1662588 126676933 1662588 0 0 0 0
+T BasisNetworkCon 0 0
+T BasisServerLogW 1 2
+T basis-iroh 330 178
+T BSR-TickLoop 52 16
+T basis-lnl-peers 0 0
+T basis-lnl-logic 556 630
+T JoinBroadcast 2 1
+T UdpDropMonitor 0 0
+T MemoryReclaim 0 0
+T bsr-send-0 1100 26
