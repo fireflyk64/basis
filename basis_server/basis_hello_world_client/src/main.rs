@@ -7,6 +7,8 @@
 //!
 //! `--ip` takes a host or an iroh connection string (`<endpoint-id>[@host:port]`). Add `--direct`
 //! and the ring runs over direct peer-to-peer links instead; each hop prints the path it took.
+//! `--stack litenetlib` joins the way the legacy C# clients do, over the LiteNetLib protocol on
+//! the server's legacy port.
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -51,14 +53,15 @@ fn main() -> ExitCode {
     let client_count: usize = arg(&args, "--clients", "2").parse().unwrap_or(2).max(2);
     let hops: i32 = arg(&args, "--hops", "10").parse().unwrap_or(10).max(1);
     let direct = args.iter().any(|a| a == "--direct");
+    let stack = arg(&args, "--stack", "iroh");
 
-    println!("Connecting {client_count} clients to {ip}:{port} for a {hops}-hop volley{}.", if direct { " over direct links" } else { "" });
+    println!("Connecting {client_count} clients to {ip}:{port} over the {stack} stack for a {hops}-hop volley{}.", if direct { " over direct links" } else { "" });
 
     let mut clients: Vec<Client> = Vec::with_capacity(client_count);
     for i in 0..client_count {
         let name = format!("Hello{i}");
         let client = if direct {
-            match HelloPeerClient::new(&name) {
+            match HelloPeerClient::with_stack(&name, &stack) {
                 Ok(c) => Client::Direct(c),
                 Err(e) => {
                     eprintln!("Client {i} could not be created: {e}");
@@ -66,7 +69,7 @@ fn main() -> ExitCode {
                 }
             }
         } else {
-            match BasisHelloClient::new(&name) {
+            match BasisHelloClient::with_stack(&name, &stack) {
                 Ok(c) => Client::Relay(c),
                 Err(e) => {
                     eprintln!("Client {i} could not be created: {e}");

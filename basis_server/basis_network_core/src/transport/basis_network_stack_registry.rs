@@ -14,6 +14,8 @@ use super::connection_target::{ConnectionTarget, IConnectionTargetParser};
 use super::iroh_connection_target_parser::IrohConnectionTargetParser;
 use super::iroh_network_impl::IrohNetManager;
 use super::lnl_connection_target_parser::LNLConnectionTargetParser;
+use super::lnl_network_impl::LnlNetManager;
+use super::mixed_network_impl::{MixedConnectionTargetParser, MixedNetManager};
 
 #[derive(Clone, Debug, Default)]
 pub struct ServerProbeResult {
@@ -70,15 +72,21 @@ fn key(id: &str) -> String {
 }
 
 /// Which transport a server or client runs on, by id. The C# static constructor registered
-/// LiteNetLib; here [`BasisNetworkStackRegistry::ensure_initialized`] registers iroh (the
-/// default) and the LiteNetLib id, whose manager factory is the slot the API-compatible
-/// LiteNetLib-protocol transport will fill in.
+/// LiteNetLib; here [`BasisNetworkStackRegistry::ensure_initialized`] registers three stacks:
+/// iroh (the client default), the LiteNetLib protocol the existing C# clients speak, and
+/// `mixed` — both at once, the server default — so legacy and new clients share one world.
 pub struct BasisNetworkStackRegistry;
 
 impl BasisNetworkStackRegistry {
     pub const LITE_NET_LIB_ID: &'static str = "litenetlib";
     pub const IROH_ID: &'static str = "iroh";
+    /// iroh and LiteNetLib listening side by side, one peer-id space.
+    pub const MIXED_ID: &'static str = "mixed";
+    /// What a client gets for an empty stack id.
     pub const DEFAULT_ID: &'static str = Self::IROH_ID;
+    /// What a server gets for an empty stack id: it stands between the legacy clients and the
+    /// new ones, so it listens for both.
+    pub const SERVER_DEFAULT_ID: &'static str = Self::MIXED_ID;
 
     fn with_state<R>(f: impl FnOnce(&mut RegistryState) -> R) -> R {
         let mut guard = STATE.lock();
@@ -100,14 +108,19 @@ impl BasisNetworkStackRegistry {
         Self::register_into(state, Self::IROH_ID, "iroh", iroh);
         if let Some(slot) = state.slots.get_mut(&key(Self::IROH_ID)) {
             slot.parser = Some(Arc::new(IrohConnectionTargetParser));
+            slot.probe = Some(Arc::new(|target, timeout_ms| Box::pin(IrohNetManager::probe(target, timeout_ms))));
         }
-        let lnl: NetManagerFactory = Arc::new(|_, _| {
-            BNL::log_error("The LiteNetLib-protocol transport is not part of this build yet; use the 'iroh' stack.");
-            None
-        });
+        let lnl: NetManagerFactory = Arc::new(LnlNetManager::create);
         Self::register_into(state, Self::LITE_NET_LIB_ID, "LiteNetLib", lnl);
         if let Some(slot) = state.slots.get_mut(&key(Self::LITE_NET_LIB_ID)) {
             slot.parser = Some(Arc::new(LNLConnectionTargetParser));
+            slot.probe = Some(Arc::new(|target, timeout_ms| Box::pin(LnlNetManager::probe(target, timeout_ms))));
+        }
+        let mixed: NetManagerFactory = Arc::new(MixedNetManager::create);
+        Self::register_into(state, Self::MIXED_ID, "iroh + LiteNetLib", mixed);
+        if let Some(slot) = state.slots.get_mut(&key(Self::MIXED_ID)) {
+            slot.parser = Some(Arc::new(MixedConnectionTargetParser));
+            slot.probe = Some(Arc::new(|target, timeout_ms| Box::pin(MixedNetManager::probe(target, timeout_ms))));
         }
         BasisTransportConfigStore::register_type::<IrohTransportConfig>(Self::IROH_ID);
         BasisTransportConfigStore::register_type::<LNLTransportConfig>(Self::LITE_NET_LIB_ID);

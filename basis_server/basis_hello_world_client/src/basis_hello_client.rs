@@ -23,6 +23,7 @@ use basis_network_core::SerializableBasis::{
 use basis_network_core::compression::{BasisAvatarBitPacking, BitQuality};
 use basis_network_core::configuration::Configuration;
 use basis_network_core::transport::basis_network_shell::ConnectionRequest;
+use basis_network_core::transport::basis_network_stack_registry::BasisNetworkStackRegistry;
 use basis_network_core::{BNL, BasisNetworkCommons, DeliveryMethod, NetDataReader, NetDataWriter, NetPeerRef};
 use parking_lot::{Condvar, Mutex, RwLock};
 
@@ -90,6 +91,9 @@ impl Joined {
 
 pub struct BasisHelloClient {
     display_name: String,
+    /// The transport this client speaks: iroh (the default) or `litenetlib`, the protocol the
+    /// legacy C# clients use — the same server admits both.
+    network_stack_id: String,
     identity: ClientIdentity,
     avatar_bytes: Vec<u8>,
     joined: Joined,
@@ -109,11 +113,20 @@ impl BasisHelloClient {
     const KIND_NUMBER: u8 = 0;
     const KIND_TEXT: u8 = 1;
 
-    /// A client with a freshly generated did:key identity.
+    /// A client with a freshly generated did:key identity, on the iroh stack.
     pub fn new(display_name: &str) -> BasisResult<Arc<Self>> {
+        Self::with_stack(display_name, BasisNetworkStackRegistry::IROH_ID)
+    }
+
+    /// A client on a named stack: `iroh`, or `litenetlib` to join as a legacy client would.
+    pub fn with_stack(display_name: &str, network_stack_id: &str) -> BasisResult<Arc<Self>> {
+        if !BasisNetworkStackRegistry::is_registered(network_stack_id) {
+            return Err(BasisError::permanent(ErrorCode::InvalidArgument, format!("'{network_stack_id}' is not a registered network stack")));
+        }
         let identity = ClientIdentity::generate()?;
         Ok(Arc::new_cyclic(|weak| Self {
             display_name: display_name.to_string(),
+            network_stack_id: network_stack_id.to_string(),
             identity,
             // The server stores this blob and replays it to other players without ever decoding
             // it. It has to be non-empty, or the ready message fails validation and the join is
@@ -133,6 +146,11 @@ impl BasisHelloClient {
     /// Name this client shows up under in the server's player list.
     pub fn display_name(&self) -> &str {
         &self.display_name
+    }
+
+    /// The stack this client was created on.
+    pub fn network_stack_id(&self) -> &str {
+        &self.network_stack_id
     }
 
     /// This client's did:key identity.
@@ -215,7 +233,7 @@ impl BasisHelloClient {
         *self.server_target.write() = (target.to_string(), port);
         let client = Arc::new(NetworkClient::new());
         let mut ready = self.ready_message();
-        let peer = client.start_client(target, port, &mut ready, password.as_bytes(), &Self::create_configuration())?;
+        let peer = client.start_client(target, port, &mut ready, password.as_bytes(), &self.create_configuration())?;
         let Some(listener) = client.listener() else {
             client.shutdown();
             return Err(BasisError::permanent(ErrorCode::Internal, "the client transport has no listener"));
@@ -385,8 +403,9 @@ impl BasisHelloClient {
         }
     }
 
-    fn create_configuration() -> Configuration {
+    fn create_configuration(&self) -> Configuration {
         Configuration {
+            network_stack_id: self.network_stack_id.clone(),
             use_auth_identity: true,
             // Nothing here reads the per-channel counters.
             enable_statistics: false,

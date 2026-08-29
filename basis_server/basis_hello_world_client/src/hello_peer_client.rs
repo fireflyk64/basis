@@ -92,7 +92,16 @@ pub struct HelloPeerClient {
 
 impl HelloPeerClient {
     pub fn new(display_name: &str) -> BasisResult<Arc<Self>> {
-        let base = BasisHelloClient::new(display_name)?;
+        Self::with_base(BasisHelloClient::new(display_name)?)
+    }
+
+    /// A peer client on a named stack. On `litenetlib` every direct-link request is declined by
+    /// the server and the sends fall back to the relay — which is the point of the mixed tests.
+    pub fn with_stack(display_name: &str, network_stack_id: &str) -> BasisResult<Arc<Self>> {
+        Self::with_base(BasisHelloClient::with_stack(display_name, network_stack_id)?)
+    }
+
+    fn with_base(base: Arc<BasisHelloClient>) -> BasisResult<Arc<Self>> {
         let this = Arc::new(Self { base: base.clone(), by_token: DashMap::new(), by_player: DashMap::new() });
         base.set_extension(Some(this.clone()));
         Ok(this)

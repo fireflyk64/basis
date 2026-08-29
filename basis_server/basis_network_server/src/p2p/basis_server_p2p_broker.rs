@@ -107,6 +107,10 @@ impl BasisServerP2PBroker {
             return;
         };
         if sub == BasisNetworkCommons::P2P_SUB_INTRODUCE_REQUEST {
+            if !peer.direct_link_capable() {
+                BNL::log_warning(format!("[P2P] Peer {} is on a transport without direct links; ignoring its introduce request.", peer.id()));
+                return;
+            }
             let mut request = BasisP2PIntroduceRequest::default();
             if request.deserialize(&mut reader).is_err() {
                 BNL::log_error(format!("[P2P] Malformed introduce request from peer {}.", peer.id()));
@@ -200,6 +204,18 @@ impl BasisServerP2PBroker {
             Self::send_sub(sender, BasisNetworkCommons::P2P_SUB_CANCEL, &msg.session_token, msg.other_player_id, None);
             return;
         };
+        // A legacy LiteNetLib client on either end cannot hole-punch: the server stays in the
+        // middle for that pair. Declining now, rather than letting the session stall, is what
+        // lets the requester fall back to the relay at once instead of after a timeout.
+        if !sender.direct_link_capable() || !target.direct_link_capable() {
+            BNL::log(format!(
+                "[P2P] Declining direct link between peer {} and peer {other_id}: {} is on a transport without direct links; the server relays for them.",
+                sender.id(),
+                if sender.direct_link_capable() { format!("peer {other_id}") } else { format!("peer {}", sender.id()) }
+            ));
+            Self::send_sub(sender, BasisNetworkCommons::P2P_SUB_CANCEL, &msg.session_token, msg.other_player_id, None);
+            return;
+        }
         // Reuse of an existing token by the same peer just refreshes that session; only a
         // genuinely new token grows the set, so cap on distinct outstanding sessions per peer.
         let over_cap = PEER_SESSIONS

@@ -30,9 +30,9 @@
 
 	<!--
 	  The iroh transport lives in the basis_iroh_ffi native library, built from the Rust workspace
-	  (`cargo build --release -p basis_iroh_ffi`). It is copied beside the executable when it is
+	  (cargo build, release profile, package basis_iroh_ffi). It is copied beside the executable when it is
 	  found; point BasisIrohFfiDir somewhere else for a build that lives elsewhere. Without it the
-	  clients can still run on LiteNetLib with `--stack litenetlib`.
+	  clients can still run on LiteNetLib (pass "stack litenetlib" on the command line).
 	-->
 	<PropertyGroup>
 		<BasisIrohFfiDir Condition="'$(BasisIrohFfiDir)' == ''">$(MSBuildThisFileDirectory)../../basis_server/target/release/</BasisIrohFfiDir>

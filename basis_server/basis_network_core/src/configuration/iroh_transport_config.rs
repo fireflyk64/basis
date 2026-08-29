@@ -8,6 +8,9 @@ basis_xml_config! {
     pub struct IrohTransportConfig ("IrohTransportConfig", IrohTransportConfig::CURRENT_CONFIG_VERSION) {
         /// Schema version stamped into the file; 0 = pre-versioning, upgraded on load.
         pub config_version: i32 = 0 => "ConfigVersion" [Int],
+        /// UDP port the iroh endpoint binds. 0 = SetPort when iroh is the only stack, SetPort + 1
+        /// on the mixed stack (LiteNetLib keeps SetPort, the port every deployed client knows).
+        pub port: u16 = 0 => "Port" [UShort],
         /// "default" (n0 relays), "disabled" (direct only) or "custom" (RelayUrls).
         pub relay_mode: String = "default".to_string() => "RelayMode" [Str],
         pub relay_urls: String = String::new() => "RelayUrls" [Str],
@@ -22,7 +25,7 @@ basis_xml_config! {
 }
 
 impl IrohTransportConfig {
-    pub const CURRENT_CONFIG_VERSION: i32 = 1;
+    pub const CURRENT_CONFIG_VERSION: i32 = 2;
 
     pub fn relay_urls_list(&self) -> Vec<String> {
         self.relay_urls

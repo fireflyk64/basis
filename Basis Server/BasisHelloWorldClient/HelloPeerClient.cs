@@ -107,18 +107,20 @@ namespace Basis.HelloWorld
 
             if (_byPlayer.TryGetValue(otherPlayerId, out DirectSession? existing))
             {
-                return existing.Confirmed.Wait(timeout);
+                return existing.Confirmed.Wait(timeout) && existing.Offloaded;
             }
 
             DirectSession session = NewSession(Guid.NewGuid().ToString("N"), otherPlayerId);
             if (!Register(session))
             {
                 // Both sides asked at once and the other's session won the slot.
-                return _byPlayer.TryGetValue(otherPlayerId, out DirectSession? winner) && winner.Confirmed.Wait(timeout);
+                return _byPlayer.TryGetValue(otherPlayerId, out DirectSession? winner) && winner.Confirmed.Wait(timeout) && winner.Offloaded;
             }
 
             SendSignal(server, BasisNetworkCommons.P2PSub_Request, otherPlayerId, session.Token, session.LocalPublic);
-            return session.Confirmed.Wait(timeout);
+            // A session the server declined (no such player, a link that was lost) also wakes the
+            // waiter, and that is a false, not a timeout.
+            return session.Confirmed.Wait(timeout) && session.Offloaded;
         }
 
         /// <summary>Sends one number over the direct link if there is one, otherwise via the server.</summary>

@@ -1,7 +1,8 @@
 use std::any::Any;
+use std::collections::BTreeSet;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
 use basis_error::{BasisError, BasisResult, ErrorCode};
 use parking_lot::{Mutex, RwLock};
@@ -144,6 +145,59 @@ impl From<SendError> for BasisError {
     }
 }
 
+/// Hands out the small integer ids peers are known by (the C# `NetManager.GetNextPeerId`):
+/// lowest free id first, so ids stay dense and fit the `ushort` the wire protocol carries.
+///
+/// One allocator can be shared by several transports. A server that listens on iroh and on
+/// LiteNetLib at once must never give two players the same id, and every subsystem above the
+/// transport keys players by it, so the mixed stack hands both managers the same allocator.
+#[derive(Default)]
+pub struct PeerIdAllocator {
+    free_ids: Mutex<BTreeSet<i32>>,
+    next_id: AtomicI32,
+}
+
+impl PeerIdAllocator {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// The lowest id that no live peer holds.
+    pub fn allocate(&self) -> i32 {
+        if let Some(id) = self.free_ids.lock().pop_first() {
+            return id;
+        }
+        self.next_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Returns `id` to the pool. Releasing an id that was never handed out, or twice, is
+    /// harmless: the set dedups it and the allocator only ever reissues each id once per hold.
+    pub fn release(&self, id: i32) {
+        self.free_ids.lock().insert(id);
+    }
+
+    /// Forgets every id: the transport that owned them has stopped and its peers are gone.
+    pub fn reset(&self) {
+        self.free_ids.lock().clear();
+        self.next_id.store(0, Ordering::Relaxed);
+    }
+
+    /// Ids handed out and not yet released.
+    pub fn live_count(&self) -> usize {
+        let next = usize::try_from(self.next_id.load(Ordering::Relaxed)).unwrap_or(0);
+        next.saturating_sub(self.free_ids.lock().len())
+    }
+}
+
+static NEXT_PEER_IDENTITY: AtomicU64 = AtomicU64::new(1);
+
+/// A process-wide identity for a new connection. Every transport draws from the same counter,
+/// so [`peers_equal`] can compare peers from different stacks without a collision: two live
+/// connections never share an identity, whichever transport carries them.
+pub fn next_peer_identity() -> u64 {
+    NEXT_PEER_IDENTITY.fetch_add(1, Ordering::Relaxed)
+}
+
 /// One connected peer. `Arc<dyn NetPeer>` is the currency everything above the transport passes
 /// around; equality and hashing are by transport identity (the C# `LNLNetPeer.Equals`).
 pub trait NetPeer: Send + Sync {
@@ -187,6 +241,13 @@ pub trait NetPeer: Send + Sync {
     fn identity(&self) -> u64;
     /// Whether the transport still holds the connection open.
     fn is_connected(&self) -> bool;
+    /// Whether this peer's transport can hold a direct link to another player, so the server
+    /// may offload their traffic to a peer-to-peer connection. A legacy LiteNetLib client
+    /// cannot: everything to and from it stays relayed by the server, and the P2P broker
+    /// declines any session that names it.
+    fn direct_link_capable(&self) -> bool {
+        true
+    }
     fn as_any(&self) -> &dyn Any;
 }
 

@@ -15,6 +15,7 @@ use basis_network_core::identity::BasisUserRestrictionMode;
 use basis_network_core::statistics::basis_network_statistics::BasisNetworkStatistics;
 use basis_network_core::transport::basis_network_shell::{NetDebug, NetManagerRef, peers_equal};
 use basis_network_core::transport::basis_network_stack_registry::BasisNetworkStackRegistry;
+use basis_network_core::transport::{IrohNetManager, LnlNetManager, MixedNetManager};
 use basis_network_core::{BNL, BasisCpuBudget, DeliveryMethod, EventBasedNetListener, NetDataWriter, NetPeerRef};
 use crossbeam_queue::ArrayQueue;
 use dashmap::DashMap;
@@ -448,6 +449,12 @@ impl NetworkServer {
             BasisNetworkStackRegistry::IROH_ID,
             Arc::new(|_manager| Arc::new(IrohPeerIntroducer)),
         );
+        // The mixed stack introduces its iroh peers the same way; its legacy peers are never
+        // introduced at all (the broker declines them), so one introducer covers both.
+        BasisNetworkStackRegistry::register_introducer_factory(
+            BasisNetworkStackRegistry::MIXED_ID,
+            Arc::new(|_manager| Arc::new(IrohPeerIntroducer)),
+        );
         BasisServerP2PBroker::initialize();
         Ok(())
     }
@@ -457,11 +464,14 @@ impl NetworkServer {
     pub fn setup_server(configuration: &Configuration) -> BasisResult<()> {
         let listener = EventBasedNetListener::new();
         *STATE.listener.write() = Some(listener.clone());
-        let server = BasisNetworkStackRegistry::create(&configuration.network_stack_id, listener, configuration).ok_or_else(|| {
-            BasisError::permanent(
-                ErrorCode::Transport,
-                format!("network stack '{}' could not be created", configuration.network_stack_id),
-            )
+        // An empty id means "serve everyone": the legacy LiteNetLib clients and the iroh ones.
+        let stack_id = if configuration.network_stack_id.trim().is_empty() {
+            BasisNetworkStackRegistry::SERVER_DEFAULT_ID
+        } else {
+            configuration.network_stack_id.trim()
+        };
+        let server = BasisNetworkStackRegistry::create(stack_id, listener, configuration).ok_or_else(|| {
+            BasisError::permanent(ErrorCode::Transport, format!("network stack '{stack_id}' could not be created"))
         })?;
         *STATE.server.write() = Some(server);
 
@@ -494,7 +504,29 @@ impl NetworkServer {
         BNL::log(format!("Listening on UDP port {}", configuration.set_port));
         BNL::log(format!("  IPv4 bind: {ipv4}"));
         BNL::log(format!("  IPv6 bind: [{ipv6}]"));
+        for line in Self::describe_listeners(&server) {
+            BNL::log(format!("  {line}"));
+        }
         Ok(())
+    }
+
+    /// What each transport is reachable at, for the boot log: the legacy port for LiteNetLib
+    /// clients, the connection string for iroh ones.
+    pub fn describe_listeners(server: &NetManagerRef) -> Vec<String> {
+        let any = server.as_any();
+        if let Some(mixed) = any.downcast_ref::<MixedNetManager>() {
+            return vec![
+                format!("legacy (LiteNetLib) clients: UDP port {}", mixed.legacy_port()),
+                format!("iroh clients: {}", mixed.connection_string()),
+            ];
+        }
+        if let Some(iroh) = any.downcast_ref::<IrohNetManager>() {
+            return vec![format!("iroh clients: {}", iroh.connection_string())];
+        }
+        if let Some(lnl) = any.downcast_ref::<LnlNetManager>() {
+            return vec![format!("legacy (LiteNetLib) clients: UDP port {}", lnl.local_port())];
+        }
+        Vec::new()
     }
 
     // ── Sending ────────────────────────────────────────────────────────────

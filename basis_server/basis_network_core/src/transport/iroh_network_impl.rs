@@ -40,7 +40,7 @@
 //! ran LiteNetLib in.
 
 use std::any::Any;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
@@ -558,10 +558,11 @@ struct ManagerInner {
     enable_statistics: bool,
     priority_channels: Vec<bool>,
     peers: DashMap<i32, IrohNetPeer>,
-    /// Ids handed back by departed peers, reused lowest-first like LiteNetLib.
-    free_ids: Mutex<BTreeSet<i32>>,
-    next_id: AtomicI32,
-    next_identity: AtomicU64,
+    /// Peer ids, reused lowest-first like LiteNetLib. Shared with the LiteNetLib manager when
+    /// both stacks serve one world, so a player id is unique across transports.
+    ids: Arc<PeerIdAllocator>,
+    /// Whether `stop` may reset the allocator: false when it was handed in by a mixed stack.
+    owns_ids: bool,
     running: AtomicBool,
     accept_task: Mutex<Option<JoinHandle<()>>>,
     packets_sent: AtomicU64,
@@ -590,6 +591,28 @@ impl IrohNetManager {
 
     /// Builds a manager with an explicit secret key (tests, clients that keep an identity).
     pub fn new(listener: Arc<EventBasedNetListener>, transport: IrohTransportConfig, enable_statistics: bool, secret_key: Option<SecretKey>) -> Self {
+        Self::build(listener, transport, enable_statistics, secret_key, PeerIdAllocator::new(), true)
+    }
+
+    /// Builds a manager that draws peer ids from `ids`, an allocator another transport shares.
+    pub fn with_id_allocator(
+        listener: Arc<EventBasedNetListener>,
+        transport: IrohTransportConfig,
+        enable_statistics: bool,
+        secret_key: Option<SecretKey>,
+        ids: Arc<PeerIdAllocator>,
+    ) -> Self {
+        Self::build(listener, transport, enable_statistics, secret_key, ids, false)
+    }
+
+    fn build(
+        listener: Arc<EventBasedNetListener>,
+        transport: IrohTransportConfig,
+        enable_statistics: bool,
+        secret_key: Option<SecretKey>,
+        ids: Arc<PeerIdAllocator>,
+        owns_ids: bool,
+    ) -> Self {
         IrohRuntime::configure_worker_threads(transport.tokio_worker_threads);
         let inner = Arc::new(ManagerInner {
             listener,
@@ -599,9 +622,8 @@ impl IrohNetManager {
             enable_statistics,
             priority_channels: BasisNetworkCommons::build_priority_unreliable_channel_map(),
             peers: DashMap::new(),
-            free_ids: Mutex::new(BTreeSet::new()),
-            next_id: AtomicI32::new(0),
-            next_identity: AtomicU64::new(1),
+            ids,
+            owns_ids,
             running: AtomicBool::new(false),
             accept_task: Mutex::new(None),
             packets_sent: AtomicU64::new(0),
@@ -806,14 +828,11 @@ impl ManagerInner {
     }
 
     fn allocate_id(&self) -> i32 {
-        if let Some(id) = self.free_ids.lock().pop_first() {
-            return id;
-        }
-        self.next_id.fetch_add(1, Ordering::Relaxed)
+        self.ids.allocate()
     }
 
     fn release_id(&self, id: i32) {
-        self.free_ids.lock().insert(id);
+        self.ids.release(id);
     }
 
     fn queue_limits(&self) -> (u32, u32) {
@@ -829,7 +848,7 @@ impl ManagerInner {
         let state = Arc::new(PeerState {
             id,
             remote_id: AtomicI32::new(remote_id),
-            identity: self.next_identity.fetch_add(1, Ordering::Relaxed),
+            identity: next_peer_identity(),
             conn,
             remote_addr: remote,
             manager: Arc::downgrade(self),
@@ -1571,8 +1590,9 @@ impl NetManager for IrohNetManager {
             self.inner.finish_peer(p.state.clone(), DisconnectReason::DisconnectPeerCalled, None);
         }
         self.inner.peers.clear();
-        self.inner.free_ids.lock().clear();
-        self.inner.next_id.store(0, Ordering::Relaxed);
+        if self.inner.owns_ids {
+            self.inner.ids.reset();
+        }
     }
 
     fn connect(&self, target: &str, port: u16, writer: &NetDataWriter) -> BasisResult<NetPeerRef> {
@@ -1601,7 +1621,7 @@ impl NetManager for IrohNetManager {
         let shared = Arc::new(PendingShared {
             slot: Mutex::new(None),
             early: Mutex::new(VecDeque::new()),
-            identity: self.inner.next_identity.fetch_add(1, Ordering::Relaxed),
+            identity: next_peer_identity(),
             tag: RwLock::new(None),
             cancelled: AtomicBool::new(false),
         });

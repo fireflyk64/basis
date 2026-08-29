@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using Basis.HelloWorld;
+using Basis.Network.Core;
 using BasisServerHandle;
 using Xunit;
 
