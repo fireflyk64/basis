@@ -53,6 +53,13 @@ namespace Basis.HelloWorld
         /// </summary>
         public static string NetworkStackId = BasisNetworkStackRegistry.IrohId;
 
+        /// <summary>
+        /// The stack this instance speaks — what it was constructed with, or the static default
+        /// at construction time. Instances on different stacks can share one process, which is
+        /// what a mixed-world test needs.
+        /// </summary>
+        public string StackId { get; }
+
         private const byte KindNumber = 0;
         private const byte KindText = 1;
 
@@ -92,9 +99,19 @@ namespace Basis.HelloWorld
         /// <summary>Raised with (senderPlayerId, text, path) for every string another player sends here.</summary>
         public event Action<ushort, string, HelloTransport>? TextReceived;
 
-        public BasisHelloClient(string displayName)
+        public BasisHelloClient(string displayName) : this(displayName, null)
+        {
+        }
+
+        /// <summary>
+        /// A client on a named stack: <see cref="BasisNetworkStackRegistry.IrohId"/> for the Rust
+        /// server's native transport, <see cref="BasisNetworkStackRegistry.LiteNetLibId"/> to join
+        /// the way every existing client does. Null means the static <see cref="NetworkStackId"/>.
+        /// </summary>
+        public BasisHelloClient(string displayName, string? networkStackId)
         {
             DisplayName = displayName;
+            StackId = string.IsNullOrEmpty(networkStackId) ? NetworkStackId : networkStackId;
 
             BasisDIDAuthIdentityClient.ClientKeyCreation(out (PubKey, PrivKey) keys, out Did did);
             _privateKey = keys.Item2;
@@ -390,11 +407,11 @@ namespace Basis.HelloWorld
             }
         }
 
-        private static Configuration CreateConfiguration()
+        private Configuration CreateConfiguration()
         {
             return new Configuration
             {
-                NetworkStackId = NetworkStackId,
+                NetworkStackId = StackId,
                 UseAuthIdentity = true,
                 // Nothing here reads the per-channel counters, and leaving them on costs an
                 // interlocked increment per packet on the pump thread.

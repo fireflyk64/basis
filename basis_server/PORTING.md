@@ -83,8 +83,37 @@ See the module docs of `basis_network_core::transport::iroh_network_impl`.
 | `MergeHold`, `CompactMerged`       | QUIC coalesces datagram frames itself                       |
 | `MaxUnreliableQueuePerPeer` etc.   | per-peer bounded bulk + priority (voice) datagram queues    |
 
-The `litenetlib` stack id, its config sidecar and its connection-string parser are kept: the
-API-compatible LiteNetLib-protocol transport planned for the C# clients registers under it.
+## The LiteNetLib protocol and the mixed world
+
+The Rust server also speaks the LiteNetLib wire protocol itself, so the existing C# clients —
+Unity and headless — connect to it unchanged: `basis_network_core::transport::lnl_network_impl`
+is a file-for-file port of the `LiteNetLib` project (packet framing, the connect/accept/reject
+handshake, reliable and sequenced channels with the 128-packet ack window, fragmentation,
+ping/RTT, MTU discovery, the `Merged` and `CompactMerged` datagram framings, unconnected
+messages, `SO_REUSEPORT` multi-socket receive). Not carried over: the NAT punch module (legacy
+clients are never offered a direct link), the CRC/XOR packet layers (never enabled by Basis),
+NTP requests and the debug latency/loss simulation.
+
+Three stacks are registered:
+
+| stack id     | listens on                                   | who connects                          |
+|--------------|----------------------------------------------|---------------------------------------|
+| `litenetlib` | `SetPort`                                    | the existing C# clients               |
+| `iroh`       | `SetPort` (or `IrohTransportConfig.Port`)    | Rust clients, C# clients via the FFI  |
+| `mixed`      | LiteNetLib on `SetPort`, iroh on `SetPort+1` | both at once — the server default     |
+
+`mixed` runs both managers on one listener with one `PeerIdAllocator` (so a player id names one
+player whichever transport carries them) and the process-wide peer identity counter. A legacy
+peer reports `NetPeer::direct_link_capable() == false`; the P2P broker declines any session that
+names one and the server keeps relaying between the two worlds — the server is always in the
+middle for legacy clients, by design.
+
+Cross-language tests (`basis_server_tests/tests/networking/csharp_interop_tests.rs`, needs
+`dotnet` and the C# solution built; otherwise they say so and pass) spawn real processes both
+ways: Rust LiteNetLib clients into the C# `BasisNetworkConsole`, and the C# hello-world clients
+into the Rust server over LiteNetLib and over iroh through `basis_iroh_ffi`. The C# side has the
+same from its end in `BasisServerTests/Networking/MixedWorldRustServerTests.cs`, which spawns
+the Rust server from its release build.
 
 ## Status
 
@@ -98,6 +127,11 @@ API-compatible LiteNetLib-protocol transport planned for the C# clients register
 - [x] headless client console (`basis_network_client_console`), bench agent (`basis_bench_agent`)
 - [x] iroh FFI (`basis_iroh_ffi`) + the C# hello-world clients on the `iroh` stack
 - [x] server tests, REST API tests (see "Tests" below)
+- [x] the LiteNetLib wire protocol (`lnl_network_impl`) and the `mixed` stack: legacy C# clients
+      and iroh clients on one server (see "The LiteNetLib protocol and the mixed world")
+- [x] cross-language interop tests, both directions, as spawned processes
+- [x] benchmark comparison (C# server vs Rust server, same harness, same legacy crowd, plus the
+      mixed and all-iroh crowds) — `benchmarks/`
 
 ## Tests
 
@@ -114,19 +148,22 @@ process-wide static run under a `serial_test` key; everything else runs in paral
 | Compression (7 of 12 files) | `compression` | 63 |
 | Compute (2 of 3 files) | `compute` | 10 |
 | Infrastructure (8 files) | `infrastructure` | 192 |
-| Networking (14 files) | `networking` | 343 |
+| Networking (14 files + LiteNetLib transport, mixed world, C# interop) | `networking` | 380 |
 | Security (6 files) | `security` | 230 |
 | Voice (2 files) | `voice` | 36 |
 | BasisRestApi.Tests (2 files) | `basis_rest_api_tests` | 38 |
 | Contrib (crypto, did, dns) | the contrib crates' `tests/` | 25 |
 
-1034 Rust tests against 1022 C# facts + 34 REST facts. Nothing in the C# tree was deleted; the
-C# suites still run against the C# server, and `HelloWorldPeerStressTests` (C#) now needs the
-Rust server on the `iroh` stack (or `--stack litenetlib` against the C# server).
+1071 Rust tests (plus 28 wire-level unit tests inside `lnl_network_impl`) against 1022 C# facts
++ 34 REST facts. Nothing in the C# tree was deleted; the C# suites still run against the C#
+server, and `HelloWorldPeerStressTests` (C#) now needs the Rust server on the `iroh` stack (or
+`--stack litenetlib` against the C# server).
 
 Not ported, on purpose:
 
-- `Compression/CompactMerge*Tests` — LiteNetLib's merged-packet framing; iroh has no merge step.
+- `Compression/CompactMerge*Tests` — the framing tests are ported into `lnl_network_impl::compact_merge`
+  and the transport tests into `networking/lnl_transport_tests.rs`; the wire-capture tests that
+  needed a `PacketLayerBase` are covered by a hand-rolled UDP client instead.
 - `Compression/{GpuLz4Experiment, PositionQuantizationExperiment, SimdCodecBenchmark,
   BundleCompressionExperiment, BundleDictionaryTrainer}` and `Compute/GpuLz4Experiment` —
   recorded measurements and tooling, not tests.
@@ -135,7 +172,9 @@ Not ported, on purpose:
   they drive LiteNetLib's per-peer unreliable queues; voice rides its own QUIC stream on iroh.
 - Cases that only exist because C# has `null` (null peers, null strings, null arrays) and the
   non-auto-resize `NetDataWriter` constructor, which the Rust writer does not have.
-- `BasisServerBenchmark` (a tool, not a test) is deferred.
+- `BasisServerBenchmark` (a tool, not a test) stays in C#: it measures both servers through
+  `/health`, so porting it would only produce a second harness to keep in agreement with the
+  first. `benchmarks/` drives it against either server.
 
 Behavioural differences the port pins deliberately, each with a test:
 

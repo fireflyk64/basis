@@ -355,12 +355,20 @@ namespace Basis.Network.Core
         {
             while (_pumping)
             {
-                if (!PollEvents()) Thread.Sleep(1);
+                if (!PollEventsOnce()) Thread.Sleep(1);
             }
         }
 
+        /// <summary>
+        /// The manual-mode pump: drains every queued transport event into the listener.
+        /// Implements the interface method by name and shape — a <c>bool</c>-returning overload
+        /// does not, and a client in manual mode would fall through to the interface's
+        /// "not supported" default and never receive anything.
+        /// </summary>
+        public void PollEvents() => PollEventsOnce();
+
         /// <summary>Drains every queued transport event into the listener. Returns whether any were raised.</summary>
-        public bool PollEvents()
+        public bool PollEventsOnce()
         {
             bool any = false;
             lock (_pollLock)

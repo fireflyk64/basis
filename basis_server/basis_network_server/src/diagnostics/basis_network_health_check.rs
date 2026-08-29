@@ -13,6 +13,7 @@ use basis_network_core::compression::BasisAvatarBundleZstd;
 use basis_network_core::configuration::{BasisTransportConfigStore, Configuration, IrohTransportConfig};
 use basis_network_core::transport::basis_network_stack_registry::BasisNetworkStackRegistry;
 use basis_network_core::transport::iroh_network_impl::IrohRuntime;
+use basis_network_core::transport::{IrohNetManager, LnlNetManager, MixedNetManager};
 use basis_network_core::BNL;
 use tokio::sync::{Semaphore, oneshot};
 use tokio::task::JoinHandle;
@@ -143,6 +144,9 @@ impl BasisNetworkHealthCheck {
         let memory = format!(",\"gc\":{}", Self::build_memory_json());
         let version = BasisNetworkVersion::server_version();
         let ready_text = if ready { "true" } else { "false" };
+        // Where each transport is reachable, so a tool that only has the health URL (the
+        // benchmark harness, a launcher) can find the iroh listener as well as the legacy port.
+        let listeners = Self::build_listeners_json();
 
         if configuration.enable_statistics
             && let Some(server) = NetworkServer::server()
@@ -150,7 +154,7 @@ impl BasisNetworkHealthCheck {
             let stats = server.statistics();
             let transport = BasisTransportConfigStore::get::<IrohTransportConfig>(BasisNetworkStackRegistry::IROH_ID);
             return format!(
-                "{{\"listening\":true,\"ready\":{ready_text},\"visitors\":{},\"capacity\":{},\"sent\":{},\"recv\":{},\"packetsSent\":{},\"packetsRecv\":{},\"droppedUnreliable\":{},\"droppedVoice\":{},\"queuePerPeer\":{},\"voiceQueuePerPeer\":{},\"currentTime\":\"{now_utc}\",\"startTime\":\"{start_time_utc}\",\"version\":\"{version}\"{memory}{bsr}}}",
+                "{{\"listening\":true,\"ready\":{ready_text},\"visitors\":{},\"capacity\":{},\"sent\":{},\"recv\":{},\"packetsSent\":{},\"packetsRecv\":{},\"droppedUnreliable\":{},\"droppedVoice\":{},\"queuePerPeer\":{},\"voiceQueuePerPeer\":{},\"currentTime\":\"{now_utc}\",\"startTime\":\"{start_time_utc}\",\"version\":\"{version}\"{listeners}{memory}{bsr}}}",
                 server.connected_peers_count(),
                 configuration.peer_limit,
                 stats.bytes_sent,
@@ -164,18 +168,40 @@ impl BasisNetworkHealthCheck {
             );
         }
         format!(
-            "{{\"listening\":true,\"ready\":{ready_text},\"currentTime\":\"{now_utc}\",\"startTime\":\"{start_time_utc}\",\"version\":\"{version}\"{memory}{bsr}}}"
+            "{{\"listening\":true,\"ready\":{ready_text},\"currentTime\":\"{now_utc}\",\"startTime\":\"{start_time_utc}\",\"version\":\"{version}\"{listeners}{memory}{bsr}}}"
         )
+    }
+
+    /// `"stack"`, `"legacyPort"` and `"iroh"` for whatever the server listens on. Empty before
+    /// the transport is up.
+    fn build_listeners_json() -> String {
+        let Some(server) = NetworkServer::server() else {
+            return String::new();
+        };
+        let any = server.as_any();
+        if let Some(mixed) = any.downcast_ref::<MixedNetManager>() {
+            return format!(",\"stack\":\"mixed\",\"legacyPort\":{},\"iroh\":\"{}\"", mixed.legacy_port(), mixed.connection_string());
+        }
+        if let Some(iroh) = any.downcast_ref::<IrohNetManager>() {
+            return format!(",\"stack\":\"iroh\",\"iroh\":\"{}\"", iroh.connection_string());
+        }
+        if let Some(lnl) = any.downcast_ref::<LnlNetManager>() {
+            return format!(",\"stack\":\"litenetlib\",\"legacyPort\":{}", lnl.local_port());
+        }
+        String::new()
     }
 
     /// Process memory. The C# reported GC generations; a Rust process has no collector, so the
     /// generation counters are 0 and `heapMb` is the resident set. Reclaim passes stand in for
     /// forced collections.
     pub fn build_memory_json() -> String {
+        // `committedMb` is what tools built against the C# document read as "the process's
+        // memory"; for a process without a managed heap that is its resident set, the same
+        // figure as `heapMb`. A collector's pause time and fragmentation are 0 by construction.
+        let resident_mb = json_num(working_set_bytes() as f64 / 1_048_576.0, 1);
         format!(
-            "{{\"gen0\":0,\"gen1\":0,\"gen2\":{},\"heapMb\":{},\"reclaimedMb\":{},\"serverGc\":false,\"latencyMode\":\"None\",\"runtime\":\"rust\"}}",
+            "{{\"gen0\":0,\"gen1\":0,\"gen2\":{},\"heapMb\":{resident_mb},\"committedMb\":{resident_mb},\"fragmentedMb\":0,\"pauseTimePercent\":0,\"allocatedMb\":0,\"reclaimedMb\":{},\"serverGc\":false,\"latencyMode\":\"None\",\"runtime\":\"rust\"}}",
             crate::diagnostics::BasisServerMemoryReclaim::passes(),
-            json_num(working_set_bytes() as f64 / 1_048_576.0, 1),
             json_num(crate::diagnostics::BasisServerMemoryReclaim::reclaimed_bytes() as f64 / 1_048_576.0, 1)
         )
     }

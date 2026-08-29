@@ -76,7 +76,12 @@ namespace Basis.HelloWorld
         /// <summary>The endpoint other peers dial to reach this client directly; empty before it is up.</summary>
         public string DirectEndpoint => (Transport as IrohNetManager)?.ConnectionString ?? string.Empty;
 
-        public HelloPeerClient(string displayName) : base(displayName)
+        public HelloPeerClient(string displayName) : this(displayName, null)
+        {
+        }
+
+        /// <summary>A peer client on a named stack; see <see cref="BasisHelloClient(string, string?)"/>.</summary>
+        public HelloPeerClient(string displayName, string? networkStackId) : base(displayName, networkStackId)
         {
         }
 
