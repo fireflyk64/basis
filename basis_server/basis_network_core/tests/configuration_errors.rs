@@ -82,9 +82,11 @@ fn set_field_refuses_unknown_names_and_bad_values_without_changing_state() {
 
 #[test]
 fn serialize_then_deserialize_round_trips_every_field() {
-    let mut config = Configuration::default();
-    config.peer_limit = 99;
-    config.server_name = "a <name> & \"quotes\"".to_string();
+    let mut config = Configuration {
+        peer_limit: 99,
+        server_name: "a <name> & \"quotes\"".to_string(),
+        ..Configuration::default()
+    };
     let xml = BasisConfigXmlDocs::serialize(&config).unwrap();
     let back: Configuration = BasisConfigXmlDocs::deserialize(&xml).unwrap();
     assert_eq!(back, config);
