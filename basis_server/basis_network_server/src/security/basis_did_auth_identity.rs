@@ -91,6 +91,19 @@ impl BasisDIDAuthIdentity {
     }
 
     /// The pending/authenticated entries, for diagnostics and tests.
+    /// Installs an authenticated entry directly, bypassing the challenge round trip, so a test
+    /// can stage which connection owns a peer id.
+    pub fn register_for_tests(&self, id: i32, uuid: &str, peer: NetPeerRef) {
+        let did = Did::new(uuid);
+        let challenge = self.make_challenge(&did);
+        self.auth_identity.insert(id, OnAuth { ready_message: ReadyMessage::default(), challenge, did, peer });
+    }
+
+    /// The entry currently holding `id`, if any.
+    pub fn auth_entry(&self, id: i32) -> Option<OnAuth> {
+        self.auth_identity.get(&id).map(|e| e.value().clone())
+    }
+
     pub fn auth_entries(&self) -> Vec<(i32, OnAuth)> {
         self.auth_identity.iter().map(|e| (*e.key(), e.value().clone())).collect()
     }

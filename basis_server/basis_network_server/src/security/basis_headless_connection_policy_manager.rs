@@ -34,12 +34,12 @@ impl BasisHeadlessConnectionPolicyManager {
         Self::is_headless_platform(&meta_data.player_platform)
     }
 
+    /// An exact (case-insensitive) match on the platform id; a padded id is not a server platform.
     pub fn is_headless_platform(player_platform: &str) -> bool {
-        let platform = player_platform.trim();
-        if platform.is_empty() {
+        if player_platform.is_empty() {
             return false;
         }
-        ["Headless", "WindowsServer", "LinuxServer", "OSXServer"].iter().any(|known| known.eq_ignore_ascii_case(platform))
+        ["Headless", "WindowsServer", "LinuxServer", "OSXServer"].iter().any(|known| known.eq_ignore_ascii_case(player_platform))
     }
 
     pub fn disconnect_connected_headless_peers() {
