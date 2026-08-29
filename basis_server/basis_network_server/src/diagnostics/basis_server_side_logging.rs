@@ -10,7 +10,7 @@ use basis_error::{BasisResult, ResultExt};
 use basis_network_core::BNL;
 use basis_network_core::configuration::Configuration;
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 
 use crate::util::{local_hour_minute, utc_today};
 
@@ -25,6 +25,10 @@ static USE_LOGGING: AtomicBool = AtomicBool::new(false);
 static WRITE_TO_SCREEN: AtomicBool = AtomicBool::new(true);
 static WRITER: LazyLock<Mutex<Option<Writer>>> = LazyLock::new(|| Mutex::new(None));
 static SCREEN_LOCK: Mutex<()> = Mutex::new(());
+/// An interactive console can take over screen output (to keep its input line intact); the
+/// sink receives one fully rendered line (ANSI colours included, no trailing newline).
+pub type ConsoleSink = Arc<dyn Fn(&str) + Send + Sync>;
+static CONSOLE_SINK: RwLock<Option<ConsoleSink>> = RwLock::new(None);
 
 #[derive(Clone, Copy)]
 enum Level {
@@ -245,13 +249,29 @@ impl BasisServerSideLogging {
         }
     }
 
+    /// Routes screen output through `sink` instead of stdout (the interactive console driver).
+    pub fn set_console_sink(sink: Option<ConsoleSink>) {
+        *CONSOLE_SINK.write() = sink;
+    }
+
+    /// One rendered console line: coloured stamp, level label and message.
+    pub fn render_console_line(stamp: &str, level_label: &str, level_ansi: &str, message: &str) -> String {
+        format!("\x1b[36m[{stamp}] {level_ansi}{level_label}\x1b[37m{message}\x1b[0m")
+    }
+
     /// Writes one whole log line. The parts land together under the screen lock so two threads
     /// cannot interleave colours and text.
     fn write_screen_line(stamp: &str, level: Level, message: &str) {
         use std::io::Write;
+        let line = Self::render_console_line(stamp, level.console_label(), level.ansi(), message);
+        let sink = CONSOLE_SINK.read().clone();
+        if let Some(sink) = sink {
+            sink(&line);
+            return;
+        }
         let _guard = SCREEN_LOCK.lock();
         let stdout = std::io::stdout();
         let mut out = stdout.lock();
-        let _ = writeln!(out, "\x1b[36m[{stamp}] {}{}\x1b[37m{message}\x1b[0m", level.ansi(), level.console_label());
+        let _ = writeln!(out, "{line}");
     }
 }

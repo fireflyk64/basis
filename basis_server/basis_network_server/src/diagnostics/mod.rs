@@ -10,5 +10,5 @@ pub use basis_network_health_check::BasisNetworkHealthCheck;
 pub use basis_network_udp_drop_monitor::BasisNetworkUdpDropMonitor;
 pub use basis_server_logger::BasisServerLogger;
 pub use basis_server_memory_reclaim::BasisServerMemoryReclaim;
-pub use basis_server_side_logging::BasisServerSideLogging;
+pub use basis_server_side_logging::{BasisServerSideLogging, ConsoleSink};
 pub use basis_statistics::BasisStatistics;

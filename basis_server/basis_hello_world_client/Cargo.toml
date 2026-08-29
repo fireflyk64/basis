@@ -17,6 +17,14 @@ parking_lot.workspace = true
 bytes.workspace = true
 rand.workspace = true
 
+basis_error = { path = "../basis_error" }
+
+dashmap.workspace = true
+
+serde_json.workspace = true
+
+uuid.workspace = true
+
 [[bin]]
 name = "basis_hello_world"
 path = "src/main.rs"
