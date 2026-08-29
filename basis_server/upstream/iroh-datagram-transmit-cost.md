@@ -144,8 +144,12 @@ delivered packet rate is itself a free variable there.
 ## Environment
 
 iroh 1.1.0 (noq 1.2.0, noq-proto 1.2.0, rustls 0.23.43, ring AEAD), Rust 1.98 edition 2024,
-Linux 6.8 x86_64 (AVX2 + AES-NI), release build with line-tables debug info, GSO unavailable on
-this kernel, socket buffers clamped to 416 KB by the host. Relays disabled; all traffic is
+Linux 6.8 x86_64 (AVX2 + AES-NI), release build with line-tables debug info. **UDP segmentation
+offload is available and functional on this host** — we verified it rather than assuming, by
+sending 2400 bytes with `UDP_SEGMENT = 1200` and confirming two 1200-byte datagrams arrive — so
+none of the cost above is an artefact of one-packet-per-syscall sending. Socket buffers are
+clamped to 416 KB by the host against the 7 MiB iroh requests, which we mention for completeness;
+the plain-UDP arm ran under the same clamp. Relays disabled; all traffic is
 direct over loopback/LAN. Full profile artifacts (folded stacks, flamegraphs, `/proc` series)
 are in `benchmarks/results/2026-08-29-iroh-profile/` in the repository this file came from, and
 we can attach them to the issue.

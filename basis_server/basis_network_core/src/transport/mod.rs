@@ -11,6 +11,7 @@ pub mod basis_network_shell;
 pub mod basis_network_stack_registry;
 pub mod connection_target;
 pub mod iroh_connection_target_parser;
+pub mod host_udp_capabilities;
 pub mod iroh_network_impl;
 pub mod lnl_connection_target_parser;
 pub mod lnl_network_impl;

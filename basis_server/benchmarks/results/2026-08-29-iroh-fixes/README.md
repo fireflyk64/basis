@@ -170,7 +170,45 @@ cause and is item 4's territory. Worth watching on a host with writable `rmem_ma
 ## Item 2, backed out
 
 Kept for one commit, then removed on the grounds that it bought nothing measurable here and the
-transport is better off simple. The measurement above stands, and so does the reason it came to
-nothing: noq clamps `max_ack_delay` to max(RTT, 25 ms), which is why neither this attempt nor
-the earlier one moved anything on a loopback rig. If the lever is ever worth revisiting it
-should be on a real-RTT path, where the clamp lifts and the threshold binds.
+transport is better off simple. The measurement and the reason it came to nothing stand — see
+above, and note especially that noq clamps `max_ack_delay` to max(RTT, 25 ms), which is why
+neither this attempt nor the earlier one moved anything on a loopback rig. If the lever is ever
+worth revisiting it should be on a real-RTT path, where the clamp lifts and the threshold binds.
+
+## Item 4 — what the host offers, reported rather than assumed
+
+The premise turned out to be wrong, which is the main result. Three documents in this repository
+said this sandbox offers no UDP segmentation offload; that was inferred from
+`/proc/sys/net/core` being unreadable and never measured. `transport::host_udp_capabilities`
+now measures it — it sends 2400 bytes with `UDP_SEGMENT = 1200` and checks that two 1200-byte
+datagrams arrive, so a kernel that merely accepts the flag is reported as "no" — and this box
+answers:
+
+```
+UDP offload: GSO yes (up to 64 packets per sendmsg), GRO yes.
+Socket buffers: asked 7 MB, granted 416 KB receive / 416 KB send.
+```
+
+**So every measurement in this directory was taken on a host that offers GSO**, and none of the
+iroh cost is an artefact of one-packet-per-syscall sending. That strengthens item 6's case
+rather than weakening it. The corrections are applied in `../2026-08-29-two-core/README.md`,
+`../2026-08-29-iroh-profile/README.md` and the upstream report.
+
+The socket-buffer half is real and was invisible: iroh asks the kernel for 7 MiB per socket and
+accepts a refusal at `debug` level. The server now reports the grant at boot at error level when
+it is short — the same words the LiteNetLib path has always used — and publishes the whole
+picture in `/health`:
+
+```json
+"hostUdp": {"gso": true, "gsoMaxSegments": 64, "gro": true,
+            "requestedSocketBufferBytes": 7340032,
+            "grantedReceiveBufferBytes": 425984, "grantedSendBufferBytes": 425984,
+            "rmemMax": null, "wmemMax": null},
+"udpReceiveBufferDrops": 0
+```
+
+which is what makes item 4 measurable on a host this session cannot reach. `udpReceiveBufferDrops`
+climbing during a run means that run was buffer-bound and its CPU figures describe a bottleneck
+rather than the transport. The runbook — including the `strace -c` check for whether quinn
+actually takes the offload up, which needs a host that permits `ptrace` (this one refuses it to
+root) — is in `../../../irohplan.md`.

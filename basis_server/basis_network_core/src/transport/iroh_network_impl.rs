@@ -58,6 +58,7 @@ use basis_error::{BasisError, BasisResult, ErrorCode, FaultKind};
 
 use crate::BNL;
 use crate::configuration::{BasisPopulationScale, BasisTransportConfigStore, Configuration, IrohTransportConfig};
+use crate::transport::host_udp_capabilities::{self, HostUdpCapabilities};
 use crate::io::{NetDataReader, NetDataWriter, NetPacketReader};
 use crate::pooling::packet_buffer_pool::PacketBufferPool;
 use crate::protocol::BasisNetworkCommons;
@@ -1062,10 +1063,37 @@ impl ManagerInner {
         };
         *self.endpoint.write() = Some(endpoint.clone());
         self.running.store(true, Ordering::SeqCst);
+        Self::report_host_udp_capabilities();
         let me = self.clone();
         let task = IrohRuntime::spawn(async move { me.accept_loop(endpoint).await })?;
         *self.accept_task.lock() = Some(task);
         Ok(())
+    }
+
+    /// Says once, at the level each fact deserves, what this host's UDP stack will do for the
+    /// endpoint just bound. Both facts are invisible otherwise: iroh's sockets ask for 7 MiB and
+    /// accept a refusal at `debug` level, and whether the kernel performs segmentation offload
+    /// decides whether QUIC sends one packet per syscall or up to sixty-four.
+    fn report_host_udp_capabilities() {
+        static REPORTED: AtomicBool = AtomicBool::new(false);
+        if REPORTED.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let caps = HostUdpCapabilities::get();
+        BNL::log(format!("[iroh] {}", caps.report()));
+        if caps.socket_buffers_were_clamped() {
+            BNL::log_error(format!(
+                "[iroh] The OS clamped this endpoint's socket buffers: iroh asked for {} MB and the kernel granted {} KB receive / {} KB send. On Linux raise net.core.rmem_max and net.core.wmem_max in /etc/sysctl.d and restart; iroh logs the refusal only at debug level, so this line is the only place it shows up. Left alone, the kernel drops inbound datagrams under load.",
+                host_udp_capabilities::IROH_REQUESTED_SOCKET_BUFFER >> 20,
+                caps.granted_receive_buffer.unwrap_or(0) / 1024,
+                caps.granted_send_buffer.unwrap_or(0) / 1024,
+            ));
+        }
+        if caps.gso == host_udp_capabilities::Support::No {
+            BNL::log_warning(
+                "[iroh] This host does not perform UDP segmentation offload, so QUIC issues one sendmsg per packet. Expect the network worker to spend a larger share of its time in syscalls than a host with GSO would.",
+            );
+        }
     }
 
     async fn accept_loop(self: Arc<Self>, endpoint: Endpoint) {

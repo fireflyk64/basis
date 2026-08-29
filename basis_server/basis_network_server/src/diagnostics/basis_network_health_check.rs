@@ -12,6 +12,7 @@ use basis_network_core::BasisNetworkVersion;
 use basis_network_core::compression::BasisAvatarBundleZstd;
 use basis_network_core::configuration::{BasisTransportConfigStore, Configuration, IrohTransportConfig};
 use basis_network_core::transport::basis_network_stack_registry::BasisNetworkStackRegistry;
+use basis_network_core::transport::host_udp_capabilities::HostUdpCapabilities;
 use basis_network_core::transport::iroh_network_impl::IrohRuntime;
 use basis_network_core::transport::{IrohNetManager, LnlNetManager, MixedNetManager};
 use basis_network_core::BNL;
@@ -147,6 +148,14 @@ impl BasisNetworkHealthCheck {
         // Where each transport is reachable, so a tool that only has the health URL (the
         // benchmark harness, a launcher) can find the iroh listener as well as the legacy port.
         let listeners = Self::build_listeners_json();
+        // What the host's UDP stack actually does — segmentation offload, and the socket buffers
+        // the kernel granted against what iroh asked for. Both decide how a run on this host
+        // should be read, and a benchmark run somewhere else has no other way to capture them.
+        let host_udp = format!(
+            ",\"hostUdp\":{},\"udpReceiveBufferDrops\":{}",
+            HostUdpCapabilities::get().json(),
+            crate::diagnostics::BasisNetworkUdpDropMonitor::total_receive_buffer_drops()
+        );
 
         if configuration.enable_statistics
             && let Some(server) = NetworkServer::server()
@@ -154,7 +163,7 @@ impl BasisNetworkHealthCheck {
             let stats = server.statistics();
             let transport = BasisTransportConfigStore::get::<IrohTransportConfig>(BasisNetworkStackRegistry::IROH_ID);
             return format!(
-                "{{\"listening\":true,\"ready\":{ready_text},\"visitors\":{},\"capacity\":{},\"sent\":{},\"recv\":{},\"packetsSent\":{},\"packetsRecv\":{},\"droppedUnreliable\":{},\"droppedVoice\":{},\"queuePerPeer\":{},\"voiceQueuePerPeer\":{},\"currentTime\":\"{now_utc}\",\"startTime\":\"{start_time_utc}\",\"version\":\"{version}\"{listeners}{memory}{bsr}}}",
+                "{{\"listening\":true,\"ready\":{ready_text},\"visitors\":{},\"capacity\":{},\"sent\":{},\"recv\":{},\"packetsSent\":{},\"packetsRecv\":{},\"droppedUnreliable\":{},\"droppedVoice\":{},\"queuePerPeer\":{},\"voiceQueuePerPeer\":{},\"currentTime\":\"{now_utc}\",\"startTime\":\"{start_time_utc}\",\"version\":\"{version}\"{listeners}{host_udp}{memory}{bsr}}}",
                 server.connected_peers_count(),
                 configuration.peer_limit,
                 stats.bytes_sent,
@@ -168,7 +177,7 @@ impl BasisNetworkHealthCheck {
             );
         }
         format!(
-            "{{\"listening\":true,\"ready\":{ready_text},\"currentTime\":\"{now_utc}\",\"startTime\":\"{start_time_utc}\",\"version\":\"{version}\"{listeners}{memory}{bsr}}}"
+            "{{\"listening\":true,\"ready\":{ready_text},\"currentTime\":\"{now_utc}\",\"startTime\":\"{start_time_utc}\",\"version\":\"{version}\"{listeners}{host_udp}{memory}{bsr}}}"
         )
     }
 

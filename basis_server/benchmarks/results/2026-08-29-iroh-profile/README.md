@@ -88,10 +88,13 @@ ACK-only packets that LiteNetLib's unreliable path simply never sends.
    space (LNL semantics are drop-on-full); use the non-waiting `send_datagram` and drain the
    peer queue in one pass per wake. Removes one future/poll round-trip per frame (16.6 k/s)
    through the 13 % event-plumbing slice. Cheap to try; measure before keeping.
-4. **On real hosts: GSO + bigger socket buffers.** 29 % of the worker's time is syscalls;
-   this kernel lacks GSO so every packet is its own `sendmsg`. quinn uses GSO where the
-   kernel offers it — verify it engages under iroh 1.1 on the production kernel, and lift
-   `rmem_max` (the 416 KB clamp here caused the join-phase receive drops).
+4. **On real hosts: GSO + bigger socket buffers.** 29 % of the worker's time is syscalls.
+   *(Corrected 2026-08-29: this kernel **does** offer GSO and GRO — measured with a real
+   segmented send, not inferred from the missing `/proc/sys/net/core`. So the syscall share
+   is not a missing-offload artefact. What is unverified is whether quinn takes the offload
+   up, which needs `strace` on a host that permits ptrace.)* The socket buffer clamp is real:
+   iroh asks for 7 MiB and gets 416 KB here, which is what caused the join-phase receive
+   drops. See `irohplan.md` for the runbook.
 5. **The many-core run remains the decider for the ratio itself.** noq's cost is per
    connection on a work-stealing runtime and will spread across 32 cores; legacy's
    `lnl-logic` receive thread will not. The 2-core ratio is iroh's worst case. (Unchanged

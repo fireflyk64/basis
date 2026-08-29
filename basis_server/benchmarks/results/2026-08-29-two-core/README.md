@@ -122,8 +122,10 @@ is where the cost lives.
 (`Notify::notify_one`) and takes each frame through `send_datagram_wait` on its own; after I1
 it should drain the whole queue per wakeup and only wake on the transition from empty.
 
-**I3 — GSO / `sendmmsg`.** quinn uses UDP GSO on Linux when the kernel offers it; this sandbox
-kernel does not (no `/proc/sys/net/core`). On a real host, check `iroh`'s socket is built with
+**I3 — GSO / `sendmmsg`.** quinn uses UDP GSO on Linux when the kernel offers it. *(Corrected
+2026-08-29: this sandbox kernel **does** offer GSO and GRO. The claim below that it does not was
+inferred from `/proc/sys/net/core` being unreadable and was never measured; a probe that performs
+a real segmented send says otherwise — see `../../../irohplan.md`.)* On a real host, check `iroh`'s socket is built with
 GSO enabled; it lets one syscall carry several QUIC packets to the same peer, which stacks
 with I1.
 
@@ -218,7 +220,9 @@ runtime, which it can. Whether that turns the ratio around is exactly what the m
 4. **Wake-up batching.** Each `send` wakes the peer's sender task; a 2 ms pump that drains
    every peer's datagram queue in one pass (LiteNetLib's model) would turn ~20k wakeups/s at
    200 players into 500 passes/s. Only worth doing after (2) shows the wakeups are the cost.
-5. **GSO** on a kernel that has it (quinn enables it itself; this sandbox's does not).
+5. **GSO** on a kernel that has it — which, corrected 2026-08-29, includes this one; what is
+   unverified is whether quinn takes it up, which needs a syscall count from a host permitting
+   `ptrace`.
 6. **Client-side cost**: the load client should share one iroh endpoint across its simulated
    clients where the test allows, which is also how a Unity client would run — one endpoint,
    one connection.
