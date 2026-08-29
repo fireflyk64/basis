@@ -58,10 +58,10 @@ fn run_scenario(gens: usize, loss: f64, serve_period: usize, switch_quality: boo
     let mut poses: Vec<Vec<Vec<u8>>> = (0..4).map(|qi| vec![S::make_realistic_payload(q_of(qi), &mut rng)]).collect();
     for _ in 1..gens {
         let big = rng.next_f64() < 0.02;
-        for qi in 0..4 {
-            let prev = poses[qi].last().unwrap().clone();
+        for (qi, history) in poses.iter_mut().enumerate() {
+            let prev = history.last().unwrap().clone();
             let next = mutate(&prev, q_of(qi), &mut rng, big);
-            poses[qi].push(next);
+            history.push(next);
         }
     }
 

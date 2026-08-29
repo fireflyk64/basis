@@ -29,7 +29,7 @@ fn quats_within_identical_quat_within() {
 #[test]
 fn quats_within_large_angle_not_within() {
     // 90° about Z: (0,0,sin45,cos45); |dot| with identity ≈ 0.707, well below the sub-degree threshold.
-    let s = 0.70710678f32;
+    let s = std::f32::consts::FRAC_1_SQRT_2;
     assert!(!BasisAvatarDeadband::quats_within(&[0.0, 0.0, s, s], &[0.0, 0.0, 0.0, 1.0], dot()));
 }
 

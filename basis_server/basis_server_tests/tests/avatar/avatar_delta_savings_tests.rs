@@ -45,7 +45,7 @@ fn legacy_body_for(kf: &[u8], cur: &[u8], q: BitQuality) -> usize {
         if !dirty {
             continue;
         }
-        let is_rotation = f >= BasisAvatarDeltaCompression::BONE_FIELD_START && f < BasisAvatarDeltaCompression::BONE_FIELD_START + BasisBoneRotationCompression::ROTATION_FIELD_COUNT;
+        let is_rotation = (BasisAvatarDeltaCompression::BONE_FIELD_START..BasisAvatarDeltaCompression::BONE_FIELD_START + BasisBoneRotationCompression::ROTATION_FIELD_COUNT).contains(&f);
         if is_rotation {
             rot_field_bits += layout.field_raw_bits(f);
         } else {
@@ -185,7 +185,8 @@ fn print_savings_table() {
         println!("== {q:?}  (keyframe wire = {} B, payload = {} B) ==", keyframe_wire(q), S::payload_size(q));
         println!("  scenario                | body B | legacy B | wire B | savings | vs legacy");
 
-        let mut row = |name: &str, mutate: &dyn Fn(&[u8], BitQuality, &mut TestRng) -> Vec<u8>| {
+        type Mutate<'a> = &'a dyn Fn(&[u8], BitQuality, &mut TestRng) -> Vec<u8>;
+        let mut row = |name: &str, mutate: Mutate<'_>| {
             let (mut mine_sum, mut legacy_sum) = (0i64, 0i64);
             for _ in 0..TRIALS {
                 let kf = S::make_realistic_payload(q, &mut rng);
