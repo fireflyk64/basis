@@ -13,8 +13,10 @@ impl BasisBitCodec {
     const WORD_BYTES: usize = 8;
 
     #[inline]
-    fn load_word(buffer: &[u8], byte_pos: usize) -> u64 {
-        u64::from_le_bytes(buffer[byte_pos..byte_pos + 8].try_into().unwrap())
+    fn load_word(buffer: &[u8], byte_pos: usize) -> Option<u64> {
+        let end = byte_pos.checked_add(Self::WORD_BYTES)?;
+        let bytes = <[u8; 8]>::try_from(buffer.get(byte_pos..end)?).ok()?;
+        Some(u64::from_le_bytes(bytes))
     }
 
     #[inline]
@@ -27,8 +29,10 @@ impl BasisBitCodec {
     pub fn read(src: &[u8], bit_pos: usize, bit_count: u32) -> u64 {
         let byte_pos = bit_pos >> 3;
         let bit_in_byte = (bit_pos & 7) as u32;
-        if bit_count <= Self::MAX_WIDE_BITS && byte_pos + Self::WORD_BYTES <= src.len() {
-            return (Self::load_word(src, byte_pos) >> bit_in_byte) & Self::low_mask(bit_count);
+        if bit_count <= Self::MAX_WIDE_BITS
+            && let Some(word) = Self::load_word(src, byte_pos)
+        {
+            return (word >> bit_in_byte) & Self::low_mask(bit_count);
         }
         Self::read_narrow(src, byte_pos, bit_in_byte, bit_count)
     }
@@ -53,7 +57,9 @@ impl BasisBitCodec {
         while bits_left > 0 {
             let room = 8 - bit_in_byte;
             let take = bits_left.min(room);
-            let chunk = (u64::from(src[byte_pos]) >> bit_in_byte) & ((1u64 << take) - 1);
+            // Bits past the end of the buffer read as zero rather than faulting.
+            let byte = src.get(byte_pos).copied().unwrap_or(0);
+            let chunk = (u64::from(byte) >> bit_in_byte) & ((1u64 << take) - 1);
             result |= chunk << out_shift;
             out_shift += take;
             bits_left -= take;
@@ -69,7 +75,10 @@ impl BasisBitCodec {
             let room = 8 - bit_in_byte;
             let take = bits_left.min(room);
             let chunk = (value & ((1u64 << take) - 1)) as u8;
-            dst[byte_pos] |= chunk << bit_in_byte;
+            // A write past the end of the buffer is dropped rather than faulting; callers size
+            // their buffers from the layout so this only guards a bug.
+            let Some(byte) = dst.get_mut(byte_pos) else { return };
+            *byte |= chunk << bit_in_byte;
             value >>= take;
             bits_left -= take;
             byte_pos += 1;
@@ -85,7 +94,8 @@ impl BasisBitCodec {
             let low_mask = (1u32 << take) - 1;
             let clear = (low_mask << bit_in_byte) as u8;
             let chunk = (((value as u32) & low_mask) << bit_in_byte) as u8;
-            dst[byte_pos] = (dst[byte_pos] & !clear) | chunk;
+            let Some(byte) = dst.get_mut(byte_pos) else { return };
+            *byte = (*byte & !clear) | chunk;
             value >>= take;
             bits_left -= take;
             byte_pos += 1;

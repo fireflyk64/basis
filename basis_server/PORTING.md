@@ -24,6 +24,7 @@ same places.
 | `BasisServerTests`                | `basis_server_tests`             | one test crate, one module per C# test file, same folder names |
 | `BasisRestApi.Tests`              | `basis_rest_api_tests`           | |
 | —                                 | `basis_iroh_ffi`                 | new: C ABI over iroh for the C# clients (P/Invoke) |
+| —                                 | `basis_error`                    | new: the fault-classified, traceable error type every crate uses |
 
 ## Naming
 
@@ -36,6 +37,33 @@ same places.
   stays `Ok(())` after logging, exactly as before.
 * The C# `out` parameters become tuples or `Option`.
 * `SerializableBasis.X` is `basis_network_core::SerializableBasis::X` (a module alias).
+
+## Error handling
+
+The C# server leans on exceptions; a production Rust server must not panic. The rules the Rust
+tree follows, enforced by `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, ...)]`
+in every library crate and `#![deny(unused_must_use)]`:
+
+* Every fallible operation returns a `Result`. Hot-path wire code uses small typed errors
+  (`NetDataError`, `SendError`, `AeadError`, `ConfigFieldError`, ...) that carry the
+  `file:line:column` where the fault was detected without allocating; everything above the
+  packet layer uses `basis_error::BasisError` (`BasisResult<T>`).
+* `BasisError` classifies every fault as **transient** (a retry can succeed: timeouts, refused
+  dials, busy resources, a name server that did not answer) or **permanent** (malformed input,
+  bad configuration, a missing file, a violated invariant), carries an `ErrorCode` category, the
+  wrapped source error, and a trace of every `?`/`.context()` boundary it crossed. `{:?}` prints
+  the full report; `RUST_BACKTRACE=1` adds a backtrace captured where the error was raised.
+* `basis_error::retry::{retry_async, retry_blocking}` with a `RetryPolicy` retry only transient
+  faults, with capped geometric backoff and jitter; permanent faults are returned at once.
+* Absent values are `Option`; "not found" as a business outcome (an unknown player id, no such
+  record) stays `Option`/`bool`, a fault becomes `Err`.
+* Lengths read from the wire are checked against the remaining data before anything is
+  allocated; frames over 1 MiB, datagrams over the path MTU, arrays over their `u16` prefix and
+  every out-of-range slice are refused with an error rather than a panic.
+* Transport event handlers run under `catch_unwind`: a bug in a message handler is logged and
+  the peer's I/O keeps running instead of hanging.
+* Negative tests for each of these paths live in `basis_network_core/tests/*_errors.rs`,
+  `contrib/*/tests/*_errors.rs` and `basis_error`'s unit tests.
 
 ## Transport mapping (LiteNetLib → iroh/QUIC)
 

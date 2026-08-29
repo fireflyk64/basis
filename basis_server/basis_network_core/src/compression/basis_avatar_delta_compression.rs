@@ -96,7 +96,8 @@ impl BasisAvatarDeltaCompression {
             }
         }
 
-        dst[dst_start..dst_start + Self::DIRTY_MASK_BYTES].copy_from_slice(&mask);
+        let mask_dst = dst.get_mut(dst_start..dst_start + Self::DIRTY_MASK_BYTES)?;
+        mask_dst.copy_from_slice(&mask);
 
         let mut w = BitWriter::new(dst, (dst_start + Self::DIRTY_MASK_BYTES) * 8);
         let body_start_bit = w.bit_position();

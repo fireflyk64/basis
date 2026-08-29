@@ -34,8 +34,10 @@ impl std::fmt::Display for Quat {
 /// frame and so is only meaningful to the rig that produced it. Conjugating by `F` (the bone's
 /// rest orientation relative to the avatar root) re-expresses it in root axes:
 ///
-///     g = F * d * conj(F)      [ENCODE]
-///     d = conj(F) * g * F      [DECODE]
+/// ```text
+/// g = F * d * conj(F)      [ENCODE]
+/// d = conj(F) * g * F      [DECODE]
+/// ```
 ///
 /// so two avatars with different local bone axes produce the same `g` for the same visible bend.
 /// Conjugation is an isometry of SO(3), so every quantisation table sized to a joint's own range
@@ -117,24 +119,40 @@ impl BasisGenericBoneRotation {
 
     /// Builds per-slot encode operators in `BONE_WRITE_ORDER` order. Inputs are indexed by
     /// HumanBodyBones enum value (length >= 55); the outputs by wire slot (length SYNC_BONE_COUNT).
-    pub fn build_encode_operator_table(rest_frame_by_bone: &[Quat], tpose_local_by_bone: &[Quat], out_pre: &mut [Quat], out_post: &mut [Quat]) {
+    /// Returns false — with the outputs partially written — when a table is shorter than the
+    /// bones it must cover.
+    pub fn build_encode_operator_table(rest_frame_by_bone: &[Quat], tpose_local_by_bone: &[Quat], out_pre: &mut [Quat], out_post: &mut [Quat]) -> bool {
         let order = &BasisBoneRotationCompression::BONE_WRITE_ORDER;
         for slot in 0..BasisBoneRotationCompression::SYNC_BONE_COUNT {
-            let bone = order[slot] as usize;
-            let (pre, post) = Self::build_encode_operators(&rest_frame_by_bone[bone], &tpose_local_by_bone[bone]);
-            out_pre[slot] = pre;
-            out_post[slot] = post;
+            let Some(bone) = order.get(slot).map(|b| *b as usize) else { return false };
+            let (Some(rest), Some(tpose)) = (rest_frame_by_bone.get(bone), tpose_local_by_bone.get(bone)) else {
+                return false;
+            };
+            let (pre, post) = Self::build_encode_operators(rest, tpose);
+            let (Some(out_pre), Some(out_post)) = (out_pre.get_mut(slot), out_post.get_mut(slot)) else {
+                return false;
+            };
+            *out_pre = pre;
+            *out_post = post;
         }
+        true
     }
 
     /// Slot-order decode operators; mirror of [`Self::build_encode_operator_table`].
-    pub fn build_decode_operator_table(rest_frame_by_bone: &[Quat], tpose_local_by_bone: &[Quat], out_pre: &mut [Quat], out_post: &mut [Quat]) {
+    pub fn build_decode_operator_table(rest_frame_by_bone: &[Quat], tpose_local_by_bone: &[Quat], out_pre: &mut [Quat], out_post: &mut [Quat]) -> bool {
         let order = &BasisBoneRotationCompression::BONE_WRITE_ORDER;
         for slot in 0..BasisBoneRotationCompression::SYNC_BONE_COUNT {
-            let bone = order[slot] as usize;
-            let (pre, post) = Self::build_decode_operators(&rest_frame_by_bone[bone], &tpose_local_by_bone[bone]);
-            out_pre[slot] = pre;
-            out_post[slot] = post;
+            let Some(bone) = order.get(slot).map(|b| *b as usize) else { return false };
+            let (Some(rest), Some(tpose)) = (rest_frame_by_bone.get(bone), tpose_local_by_bone.get(bone)) else {
+                return false;
+            };
+            let (pre, post) = Self::build_decode_operators(rest, tpose);
+            let (Some(out_pre), Some(out_post)) = (out_pre.get_mut(slot), out_post.get_mut(slot)) else {
+                return false;
+            };
+            *out_pre = pre;
+            *out_post = post;
         }
+        true
     }
 }

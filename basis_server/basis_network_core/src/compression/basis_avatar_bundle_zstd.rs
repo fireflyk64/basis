@@ -5,6 +5,11 @@ use zstd::zstd_safe::{CCtx, CParameter, DCtx, DParameter, FrameFormat};
 
 use super::basis_avatar_bundle_dictionary::BasisAvatarBundleDictionary;
 
+/// A zstd context refused one of the codec's frame parameters (the library's own error name).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("zstd context: {0}")]
+pub struct ZstdContextError(pub String);
+
 /// Zstd half of the hybrid avatar-bundle codec, plus the flags byte that tells the two halves
 /// apart on the wire.
 ///
@@ -106,9 +111,11 @@ impl BasisAvatarBundleZstd {
     }
 
     /// A compressor carrying this codec's frame parameters and no dictionary.
-    pub fn create_compressor(level: i32) -> Result<CCtx<'static>, String> {
+    pub fn create_compressor(level: i32) -> Result<CCtx<'static>, ZstdContextError> {
         let mut c = CCtx::create();
-        let set = |c: &mut CCtx<'static>, p: CParameter| c.set_parameter(p).map_err(|e| zstd::zstd_safe::get_error_name(e).to_string());
+        let set = |c: &mut CCtx<'static>, p: CParameter| {
+            c.set_parameter(p).map_err(|e| ZstdContextError(zstd::zstd_safe::get_error_name(e).to_string()))
+        };
         set(&mut c, CParameter::CompressionLevel(level))?;
         set(&mut c, CParameter::ContentSizeFlag(false))?;
         set(&mut c, CParameter::ChecksumFlag(false))?;
@@ -119,10 +126,10 @@ impl BasisAvatarBundleZstd {
     }
 
     /// Decompressor matching [`Self::create_compressor`]'s framing, no dictionary.
-    pub fn create_decompressor() -> Result<DCtx<'static>, String> {
+    pub fn create_decompressor() -> Result<DCtx<'static>, ZstdContextError> {
         let mut d = DCtx::create();
         d.set_parameter(DParameter::Format(FrameFormat::Magicless))
-            .map_err(|e| zstd::zstd_safe::get_error_name(e).to_string())?;
+            .map_err(|e| ZstdContextError(zstd::zstd_safe::get_error_name(e).to_string()))?;
         Ok(d)
     }
 

@@ -1,5 +1,17 @@
 //! Port of `Contrib/Handles/Common`: handles are human-readable names (a DNS name, a local
 //! nickname) that can be verified to point at a machine-readable identity.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unimplemented,
+        clippy::todo,
+        clippy::unreachable
+    )
+)]
+#![deny(unused_must_use)]
 
 use std::collections::HashMap;
 use std::future::Future;

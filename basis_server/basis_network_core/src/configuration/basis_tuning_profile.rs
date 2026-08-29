@@ -7,6 +7,22 @@ use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
 use crate::BNL;
 
+use super::basis_config_xml_docs::ConfigXmlError;
+use super::ConfigFieldError;
+
+/// Why one profile setting could not be applied. Logged per setting; the rest of the profile
+/// still applies.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TuningError {
+    #[error("no such setting in this build; skipped.")]
+    UnknownSetting,
+    #[error("{0}")]
+    WrongType(String),
+    #[error("type BasisUserRestrictionMode cannot be set from a profile.")]
+    NotFromProfile,
+    #[error(transparent)]
+    Field(#[from] ConfigFieldError),
+}
 use super::basis_server_configuration::Configuration;
 use super::basis_transport_config_store::BasisTransportConfigStore;
 use super::{BasisXmlConfig, FieldKind};
@@ -95,7 +111,7 @@ impl BasisTuningProfile {
         if !path.exists() {
             return None;
         }
-        match std::fs::read_to_string(path).map_err(|e| e.to_string()).and_then(|xml| Self::from_xml(&xml)) {
+        match std::fs::read_to_string(path).map_err(ConfigXmlError::from).and_then(|xml| Self::from_xml(&xml)) {
             Ok(p) => Some(p),
             Err(e) => {
                 BNL::log_warning(format!("[Tuning] Could not read '{}': {e}", path.display()));
@@ -104,73 +120,78 @@ impl BasisTuningProfile {
         }
     }
 
-    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+    pub fn save(&self, path: &Path) -> Result<(), ConfigXmlError> {
         if let Some(dir) = path.parent()
             && !dir.as_os_str().is_empty()
         {
             std::fs::create_dir_all(dir)?;
         }
         let temp = PathBuf::from(format!("{}.tmp", path.display()));
-        std::fs::write(&temp, self.to_xml())?;
-        std::fs::rename(&temp, path)
+        std::fs::write(&temp, self.to_xml()?)?;
+        std::fs::rename(&temp, path)?;
+        Ok(())
     }
 
-    pub fn to_xml(&self) -> String {
+    pub fn to_xml(&self) -> Result<String, ConfigXmlError> {
         let mut w = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
-        w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None))).unwrap();
+        w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
         let mut root = BytesStart::new("BasisTuningProfile");
         root.push_attribute(("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance"));
         root.push_attribute(("xmlns:xsd", "http://www.w3.org/2001/XMLSchema"));
-        w.write_event(Event::Start(root)).unwrap();
-        let mut elem = |name: &str, text: &str| {
-            w.write_event(Event::Start(BytesStart::new(name))).unwrap();
-            w.write_event(Event::Text(BytesText::new(text))).unwrap();
-            w.write_event(Event::End(BytesEnd::new(name))).unwrap();
+        w.write_event(Event::Start(root)).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
+        let mut elem = |name: &str, text: &str| -> Result<(), ConfigXmlError> {
+            w.write_event(Event::Start(BytesStart::new(name))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
+            w.write_event(Event::Text(BytesText::new(text))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
+            w.write_event(Event::End(BytesEnd::new(name))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
+            Ok(())
         };
-        elem("ProfileVersion", &self.profile_version.to_string());
-        elem("GeneratedUtc", &self.generated_utc);
-        elem("GeneratedBy", &self.generated_by);
-        elem("Machine", &self.machine);
-        elem("MachineDetail", &self.machine_detail);
-        elem("DesignPlayers", &self.design_players.to_string());
-        elem("ApplyToAnyMachine", if self.apply_to_any_machine { "true" } else { "false" });
-        elem("AppliedUtc", &self.applied_utc);
-        w.write_event(Event::Start(BytesStart::new("Settings"))).unwrap();
+        elem("ProfileVersion", &self.profile_version.to_string())?;
+        elem("GeneratedUtc", &self.generated_utc)?;
+        elem("GeneratedBy", &self.generated_by)?;
+        elem("Machine", &self.machine)?;
+        elem("MachineDetail", &self.machine_detail)?;
+        elem("DesignPlayers", &self.design_players.to_string())?;
+        elem("ApplyToAnyMachine", if self.apply_to_any_machine { "true" } else { "false" })?;
+        elem("AppliedUtc", &self.applied_utc)?;
+        w.write_event(Event::Start(BytesStart::new("Settings"))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
         for s in &self.settings {
             let mut e = BytesStart::new("Setting");
             e.push_attribute(("Name", s.name.as_str()));
             e.push_attribute(("Value", s.value.as_str()));
             e.push_attribute(("Stack", s.stack.as_str()));
             e.push_attribute(("Evidence", s.evidence.as_str()));
-            w.write_event(Event::Start(e)).unwrap();
-            w.write_event(Event::Start(BytesStart::new("Rationale"))).unwrap();
-            w.write_event(Event::Text(BytesText::new(&s.rationale))).unwrap();
-            w.write_event(Event::End(BytesEnd::new("Rationale"))).unwrap();
-            w.write_event(Event::End(BytesEnd::new("Setting"))).unwrap();
+            w.write_event(Event::Start(e)).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
+            w.write_event(Event::Start(BytesStart::new("Rationale"))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
+            w.write_event(Event::Text(BytesText::new(&s.rationale))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
+            w.write_event(Event::End(BytesEnd::new("Rationale"))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
+            w.write_event(Event::End(BytesEnd::new("Setting"))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
         }
-        w.write_event(Event::End(BytesEnd::new("Settings"))).unwrap();
-        w.write_event(Event::End(BytesEnd::new("BasisTuningProfile"))).unwrap();
-        String::from_utf8(w.into_inner().into_inner()).unwrap()
+        w.write_event(Event::End(BytesEnd::new("Settings"))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
+        w.write_event(Event::End(BytesEnd::new("BasisTuningProfile"))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
+        String::from_utf8(w.into_inner().into_inner()).map_err(|e| ConfigXmlError::Xml(e.to_string()))
     }
 
-    pub fn from_xml(xml: &str) -> Result<BasisTuningProfile, String> {
+    pub fn from_xml(xml: &str) -> Result<BasisTuningProfile, ConfigXmlError> {
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
         let mut buf = Vec::new();
         let mut profile = BasisTuningProfile::default();
         let mut in_settings = false;
         let mut current: Option<BasisTunedSetting> = None;
+        // quick-xml does not object to a document that simply stops; the C# XmlSerializer did.
+        let mut open_elements: usize = 0;
         let attr = |e: &BytesStart, name: &str| -> String {
             e.attributes()
                 .flatten()
-                .find(|a| a.key.as_ref() == name.as_bytes())
-                .and_then(|a| a.unescape_value().ok().map(|v| v.into_owned()))
+                .find(|a| a.key.as_ref() == name)
+                .and_then(|a| a.normalized_value(quick_xml::XmlVersion::default()).ok().map(|v| v.into_owned()))
                 .unwrap_or_default()
         };
         loop {
-            match reader.read_event_into(&mut buf).map_err(|e| e.to_string())? {
+            match reader.read_event_into(&mut buf).map_err(|e| ConfigXmlError::Malformed(e.to_string()))? {
                 Event::Start(e) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                    open_elements += 1;
+                    let name = e.name().as_ref().to_owned();
                     match name.as_str() {
                         "BasisTuningProfile" => {}
                         "Settings" => in_settings = true,
@@ -185,7 +206,9 @@ impl BasisTuningProfile {
                         }
                         _ => {
                             let end = e.to_end().into_owned();
-                            let text = reader.read_text(end.name()).map_err(|e| e.to_string())?;
+                            let text = reader.read_text(end.name()).map_err(|e| ConfigXmlError::Malformed(e.to_string()))?;
+                            // read_text consumed the matching end tag.
+                            open_elements -= 1;
                             let text = quick_xml::escape::unescape(&text).map(|c| c.into_owned()).unwrap_or_else(|_| text.to_string());
                             let text = text.trim().to_string();
                             if let Some(s) = current.as_mut() {
@@ -195,7 +218,13 @@ impl BasisTuningProfile {
                                 continue;
                             }
                             match name.as_str() {
-                                "ProfileVersion" => profile.profile_version = text.parse().map_err(|_| "ProfileVersion is not an integer".to_string())?,
+                                "ProfileVersion" => {
+                                    profile.profile_version = text.parse().map_err(|_| ConfigFieldError::BadValue {
+                                        field: "ProfileVersion".to_string(),
+                                        value: text.clone(),
+                                        reason: "not an integer".to_string(),
+                                    })?
+                                }
                                 "GeneratedUtc" => profile.generated_utc = text,
                                 "GeneratedBy" => profile.generated_by = text,
                                 "Machine" => profile.machine = text,
@@ -209,7 +238,7 @@ impl BasisTuningProfile {
                     }
                 }
                 Event::Empty(e) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                    let name = e.name().as_ref().to_owned();
                     if name == "Setting" && in_settings {
                         profile.settings.push(BasisTunedSetting {
                             name: attr(&e, "Name"),
@@ -221,7 +250,8 @@ impl BasisTuningProfile {
                     }
                 }
                 Event::End(e) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                    open_elements = open_elements.saturating_sub(1);
+                    let name = e.name().as_ref().to_owned();
                     match name.as_str() {
                         "Setting" => {
                             if let Some(s) = current.take() {
@@ -232,7 +262,14 @@ impl BasisTuningProfile {
                         _ => {}
                     }
                 }
-                Event::Eof => break,
+                Event::Eof => {
+                    if open_elements > 0 {
+                        return Err(ConfigXmlError::Malformed(format!(
+                            "unexpected end of document with {open_elements} element(s) still open"
+                        )));
+                    }
+                    break;
+                }
                 _ => {}
             }
         }
@@ -358,9 +395,9 @@ impl BasisTuningProfile {
 
     /// Sets one public field by name, converting from the profile's string form with the same
     /// conversion set the environment overrides accept. Returns the previous value's text.
-    pub fn try_set<T: BasisXmlConfig>(target: &mut T, field_name: &str, value: &str) -> Result<String, String> {
+    pub fn try_set<T: BasisXmlConfig>(target: &mut T, field_name: &str, value: &str) -> Result<String, TuningError> {
         let Some(kind) = T::field_kind(field_name) else {
-            return Err("no such setting in this build; skipped.".to_string());
+            return Err(TuningError::UnknownSetting);
         };
         let previous = target.get_field(field_name).unwrap_or_default();
         Self::check_kind(kind, value)?;
@@ -368,9 +405,9 @@ impl BasisTuningProfile {
         Ok(previous)
     }
 
-    fn try_set_object(target: &mut dyn super::BasisTransportConfigObject, field_name: &str, value: &str) -> Result<String, String> {
+    fn try_set_object(target: &mut dyn super::BasisTransportConfigObject, field_name: &str, value: &str) -> Result<String, TuningError> {
         let Some(kind) = target.field_kind(field_name) else {
-            return Err("no such setting in this build; skipped.".to_string());
+            return Err(TuningError::UnknownSetting);
         };
         let previous = target.get_field(field_name).unwrap_or_default();
         Self::check_kind(kind, value)?;
@@ -378,7 +415,7 @@ impl BasisTuningProfile {
         Ok(previous)
     }
 
-    fn check_kind(kind: FieldKind, value: &str) -> Result<(), String> {
+    fn check_kind(kind: FieldKind, value: &str) -> Result<(), TuningError> {
         let ok = match kind {
             FieldKind::Int => value.trim().parse::<i32>().is_ok(),
             FieldKind::UShort => value.trim().parse::<u16>().is_ok(),
@@ -387,20 +424,20 @@ impl BasisTuningProfile {
             FieldKind::Float | FieldKind::Double => value.trim().parse::<f64>().is_ok(),
             FieldKind::Bool => matches!(value.trim().to_ascii_lowercase().as_str(), "true" | "false"),
             FieldKind::Str => true,
-            FieldKind::RestrictionMode => return Err("type BasisUserRestrictionMode cannot be set from a profile.".to_string()),
+            FieldKind::RestrictionMode => return Err(TuningError::NotFromProfile),
         };
         if ok {
             Ok(())
         } else {
-            Err(match kind {
+            Err(TuningError::WrongType(match kind {
                 FieldKind::Int => format!("'{value}' is not an integer."),
                 FieldKind::UShort => format!("'{value}' is not a ushort."),
                 FieldKind::Byte => format!("'{value}' is not a byte."),
                 FieldKind::Long => format!("'{value}' is not a long."),
                 FieldKind::Float | FieldKind::Double => format!("'{value}' is not a number."),
                 FieldKind::Bool => format!("'{value}' is not true or false."),
-                _ => unreachable!(),
-            })
+                _ => format!("'{value}' is not valid."),
+            }))
         }
     }
 }

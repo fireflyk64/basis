@@ -1,0 +1,18 @@
+[package]
+name = "basis_error"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Fault-classified, traceable error type shared by every Basis crate"
+
+[features]
+default = []
+# Async retry helpers on tokio's timer.
+tokio = ["dep:tokio"]
+
+[dependencies]
+tokio = { workspace = true, optional = true, features = ["time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "time"] }

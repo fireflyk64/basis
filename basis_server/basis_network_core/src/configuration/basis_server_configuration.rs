@@ -43,7 +43,7 @@ basis_xml_config! {
         pub use_auth: bool = true => "UseAuth" [Bool],
         pub use_auth_identity: bool = true => "UseAuthIdentity" [Bool],
         pub network_stack_id: String = "".to_string() => "NetworkStackId" [Str],
-        pub basis_user_restriction_mode: BasisUserRestrictionMode = "".to_string() => "BasisUserRestrictionMode" [RestrictionMode],
+        pub basis_user_restriction_mode: BasisUserRestrictionMode = BasisUserRestrictionMode::default() => "BasisUserRestrictionMode" [RestrictionMode],
         pub how_many_duplicate_auth_can_exist: i32 = 2 => "HowManyDuplicateAuthCanExist" [Int],
         pub auth_validation_time_out_miliseconds: i32 = 9000 => "AuthValidationTimeOutMiliseconds" [Int],
         pub enable_console: bool = true => "EnableConsole" [Bool],
@@ -163,7 +163,7 @@ impl Configuration {
         {
             std::fs::create_dir_all(dir)?;
         }
-        let xml = BasisConfigXmlDocs::serialize(self);
+        let xml = BasisConfigXmlDocs::serialize(self)?;
         let temp_path = PathBuf::from(format!("{}.tmp", file_path.display()));
         std::fs::write(&temp_path, xml)?;
         std::fs::rename(&temp_path, file_path)?;

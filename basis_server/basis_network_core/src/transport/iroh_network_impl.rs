@@ -54,6 +54,8 @@ use parking_lot::{Mutex, RwLock};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
+use basis_error::{BasisError, BasisResult, ErrorCode, FaultKind};
+
 use crate::BNL;
 use crate::configuration::{BasisPopulationScale, BasisTransportConfigStore, Configuration, IrohTransportConfig};
 use crate::io::{NetDataReader, NetDataWriter, NetPacketReader};
@@ -86,8 +88,11 @@ const STREAM_RELIABLE_UNORDERED: u8 = 2;
 const DATAGRAM_SEQUENCED_FLAG: u8 = 0x40;
 const DATAGRAM_CHANNEL_MASK: u8 = 0x3F;
 
-/// Largest single frame accepted on a reliable stream; anything over is a protocol violation.
-const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+/// Largest single frame accepted on a reliable stream or the control stream; anything over is
+/// a protocol violation and closes the connection. The largest Basis message (a ready batch)
+/// is 32 KiB, so 1 MiB leaves room without letting one peer make the server allocate more
+/// than QUIC's own receive window already bounds.
+const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
 /// QUIC close codes.
 const CLOSE_NORMAL: u32 = 0;
@@ -99,7 +104,7 @@ const CLOSE_PROTOCOL: u32 = 4;
 /// The tokio runtime every iroh transport in the process runs on.
 pub struct IrohRuntime;
 
-static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+static RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
 static RUNTIME_THREADS: AtomicI32 = AtomicI32::new(0);
 
 impl IrohRuntime {
@@ -108,39 +113,56 @@ impl IrohRuntime {
         RUNTIME_THREADS.store(threads, Ordering::Relaxed);
     }
 
-    pub fn handle() -> tokio::runtime::Handle {
-        RUNTIME
-            .get_or_init(|| {
-                let configured = RUNTIME_THREADS.load(Ordering::Relaxed);
-                let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-                let threads = if configured > 0 { configured as usize } else { cores.max(1) };
-                tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(threads)
-                    .thread_name("basis-iroh")
-                    .enable_all()
-                    .build()
-                    .expect("tokio runtime")
-            })
-            .handle()
-            .clone()
+    /// The runtime handle. Fails only when the runtime could not be built (the OS refused the
+    /// worker threads), which every later call reports the same way.
+    pub fn handle() -> BasisResult<tokio::runtime::Handle> {
+        let runtime = RUNTIME.get_or_init(|| {
+            let configured = RUNTIME_THREADS.load(Ordering::Relaxed);
+            let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+            let threads = usize::try_from(configured).ok().filter(|t| *t > 0).unwrap_or(cores.max(1));
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(threads)
+                .thread_name("basis-iroh")
+                .enable_all()
+                .build()
+                .map_err(|e| e.to_string())
+        });
+        match runtime {
+            Ok(rt) => Ok(rt.handle().clone()),
+            Err(e) => Err(BasisError::permanent(ErrorCode::Internal, format!("the transport runtime could not be built: {e}"))),
+        }
     }
 
     /// Runs `fut` on the transport runtime and waits for it from any thread — including one
-    /// that is itself inside another runtime, which `Runtime::block_on` would refuse.
-    pub fn block_on<T: Send + 'static>(fut: impl std::future::Future<Output = T> + Send + 'static) -> T {
+    /// that is itself inside another runtime, which `Runtime::block_on` would refuse. Do not
+    /// call it from a transport worker thread: that would block the very thread the task
+    /// needs.
+    pub fn block_on<T: Send + 'static>(fut: impl std::future::Future<Output = T> + Send + 'static) -> BasisResult<T> {
         let (tx, rx) = std::sync::mpsc::channel();
-        Self::handle().spawn(async move {
+        Self::handle()?.spawn(async move {
             let _ = tx.send(fut.await);
         });
-        rx.recv().expect("transport runtime task dropped")
+        rx.recv()
+            .map_err(|_| BasisError::permanent(ErrorCode::Cancelled, "the transport runtime dropped the task before it completed"))
     }
 
-    pub fn spawn<F>(fut: F) -> JoinHandle<F::Output>
+    pub fn spawn<F>(fut: F) -> BasisResult<JoinHandle<F::Output>>
     where
         F: std::future::Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        Self::handle().spawn(fut)
+        Ok(Self::handle()?.spawn(fut))
+    }
+
+    /// Spawns a task nobody waits on. A runtime failure is logged; there is nothing else a
+    /// fire-and-forget caller could do with it.
+    pub fn spawn_detached<F>(fut: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        if let Err(e) = Self::spawn(fut) {
+            BNL::log_error(format!("[iroh] could not spawn a transport task: {e}"));
+        }
     }
 }
 
@@ -188,6 +210,8 @@ struct PeerState {
     notify: Notify,
     control_tx: tokio::sync::Mutex<Option<SendStream>>,
     ping_sent_at: Mutex<Option<(i64, Instant)>>,
+    /// Set once a datagram exceeded the live MTU, so that warning is logged once per peer.
+    warned_too_large: AtomicBool,
 }
 
 /// An iroh-backed peer. Cheap to clone; equality is by connection.
@@ -226,7 +250,12 @@ impl IrohNetPeer {
         let Some(manager) = self.manager() else { return };
         let mut frame = BytesMut::with_capacity(data.len() + 3);
         if sequenced {
-            let seq = self.state.sequenced_out[usize::from(channel)].fetch_add(1, Ordering::Relaxed) as u16;
+            let seq = self
+                .state
+                .sequenced_out
+                .get(usize::from(channel))
+                .map(|c| c.fetch_add(1, Ordering::Relaxed) as u16)
+                .unwrap_or(0);
             frame.extend_from_slice(&[channel | DATAGRAM_SEQUENCED_FLAG]);
             frame.extend_from_slice(&seq.to_le_bytes());
         } else {
@@ -245,15 +274,25 @@ impl IrohNetPeer {
             let mut q = queue.lock();
             while limit > 0 && q.len() >= limit as usize {
                 if let Some(old) = q.pop_front() {
-                    let old_channel = old[0] & DATAGRAM_CHANNEL_MASK;
-                    self.state.queued_per_channel[usize::from(old_channel)].fetch_sub(1, Ordering::Relaxed);
+                    let old_channel = old.first().copied().unwrap_or(0) & DATAGRAM_CHANNEL_MASK;
+                    if let Some(counter) = self.state.queued_per_channel.get(usize::from(old_channel)) {
+                        counter.fetch_sub(1, Ordering::Relaxed);
+                    }
                     dropped.fetch_add(1, Ordering::Relaxed);
                 }
             }
             q.push_back(frame);
         }
-        self.state.queued_per_channel[usize::from(channel)].fetch_add(1, Ordering::Relaxed);
+        if let Some(counter) = self.state.queued_per_channel.get(usize::from(channel)) {
+            counter.fetch_add(1, Ordering::Relaxed);
+        }
         self.state.notify.notify_one();
+    }
+
+    /// Largest unreliable payload this peer can carry right now, header excluded.
+    fn datagram_limit(&self, sequenced: bool) -> usize {
+        let mtu = usize::try_from(self.mtu()).unwrap_or(0);
+        if sequenced { mtu.saturating_sub(2) } else { mtu }
     }
 }
 
@@ -276,36 +315,55 @@ impl NetPeer for IrohNetPeer {
         self.state.notify.notify_one();
     }
 
-    fn send(&self, data: &[u8], channel_number: u8, delivery_method: DeliveryMethod) {
-        if !self.state.connected.load(Ordering::Relaxed) || channel_number >= BasisNetworkCommons::TOTAL_CHANNELS {
-            return;
+    fn send(&self, data: &[u8], channel_number: u8, delivery_method: DeliveryMethod) -> Result<(), SendError> {
+        if channel_number >= BasisNetworkCommons::TOTAL_CHANNELS {
+            return Err(SendError::BadChannel { channel: channel_number, max: BasisNetworkCommons::TOTAL_CHANNELS });
+        }
+        if !self.state.connected.load(Ordering::Relaxed) {
+            return Ok(()); // LiteNetLib dropped sends to a departed peer silently; so do we.
         }
         match delivery_method {
             DeliveryMethod::ReliableOrdered | DeliveryMethod::ReliableSequenced => self.enqueue_reliable(channel_number, true, data),
             DeliveryMethod::ReliableUnordered => self.enqueue_reliable(channel_number, false, data),
             DeliveryMethod::Unreliable => {
-                if data.len() > self.mtu() as usize {
-                    panic!("Unreliable payload of {} bytes exceeds the {} byte datagram limit; the transport cannot fragment it", data.len(), self.mtu());
+                let limit = self.datagram_limit(false);
+                if data.len() > limit {
+                    return Err(SendError::TooBig { size: data.len(), limit, method: delivery_method });
                 }
-                self.enqueue_unreliable(channel_number, false, data)
+                self.enqueue_unreliable(channel_number, false, data);
             }
             DeliveryMethod::Sequenced => {
-                if data.len() + 2 > self.mtu() as usize {
-                    panic!("Sequenced payload of {} bytes exceeds the {} byte datagram limit; the transport cannot fragment it", data.len(), self.mtu());
+                let limit = self.datagram_limit(true);
+                if data.len() > limit {
+                    return Err(SendError::TooBig { size: data.len(), limit, method: delivery_method });
                 }
-                self.enqueue_unreliable(channel_number, true, data)
+                self.enqueue_unreliable(channel_number, true, data);
             }
         }
+        Ok(())
     }
 
-    fn send_unreliable_raw_merge(&self, data: &[u8], offset: usize, length: usize, channel_number: u8, patch_offset: i32, patch_value: u8) {
-        let slice = &data[offset..offset + length];
-        if patch_offset >= 0 && (patch_offset as usize) < length {
-            let mut patched = slice.to_vec();
-            patched[patch_offset as usize] = patch_value;
-            self.send(&patched, channel_number, DeliveryMethod::Unreliable);
-        } else {
-            self.send(slice, channel_number, DeliveryMethod::Unreliable);
+    fn send_unreliable_raw_merge(
+        &self,
+        data: &[u8],
+        offset: usize,
+        length: usize,
+        channel_number: u8,
+        patch_offset: i32,
+        patch_value: u8,
+    ) -> Result<(), SendError> {
+        let Some(slice) = offset.checked_add(length).and_then(|end| data.get(offset..end)) else {
+            return Err(SendError::BadRange { offset, length, len: data.len() });
+        };
+        match usize::try_from(patch_offset) {
+            Ok(patch) if patch < length => {
+                let mut patched = slice.to_vec();
+                if let Some(byte) = patched.get_mut(patch) {
+                    *byte = patch_value;
+                }
+                self.send(&patched, channel_number, DeliveryMethod::Unreliable)
+            }
+            _ => self.send(slice, channel_number, DeliveryMethod::Unreliable),
         }
     }
 
@@ -372,14 +430,25 @@ impl NetPeer for IrohNetPeer {
 //  Connection request
 // ────────────────────────────────────────────────────────────────────────────
 
+const REQUEST_UNDECIDED: u8 = 0;
+const REQUEST_ACCEPTED: u8 = 1;
+const REQUEST_REJECTED: u8 = 2;
+
 struct IrohConnectionRequest {
     manager: Arc<ManagerInner>,
     conn: Connection,
-    control_tx: tokio::sync::Mutex<Option<SendStream>>,
-    control_rx: tokio::sync::Mutex<Option<RecvStream>>,
+    control_tx: Mutex<Option<SendStream>>,
+    control_rx: Mutex<Option<RecvStream>>,
     data: Vec<u8>,
     remote: SocketAddr,
-    decided: AtomicBool,
+    decided: std::sync::atomic::AtomicU8,
+    accepted: Mutex<Option<NetPeerRef>>,
+}
+
+impl IrohConnectionRequest {
+    fn is_decided(&self) -> bool {
+        self.decided.load(Ordering::SeqCst) != REQUEST_UNDECIDED
+    }
 }
 
 impl ConnectionRequest for IrohConnectionRequest {
@@ -391,41 +460,72 @@ impl ConnectionRequest for IrohConnectionRequest {
         self.remote
     }
 
-    fn accept(&self) -> NetPeerRef {
-        if self.decided.swap(true, Ordering::SeqCst) {
-            panic!("ConnectionRequest already accepted or rejected");
+    fn accept(&self) -> BasisResult<NetPeerRef> {
+        if let Err(current) =
+            self.decided.compare_exchange(REQUEST_UNDECIDED, REQUEST_ACCEPTED, Ordering::SeqCst, Ordering::SeqCst)
+        {
+            return match (current, self.accepted.lock().clone()) {
+                (REQUEST_ACCEPTED, Some(peer)) => Ok(peer),
+                (REQUEST_ACCEPTED, None) => Err(BasisError::permanent(
+                    ErrorCode::Conflict,
+                    format!("connection request from {} is being accepted on another thread", self.remote),
+                )),
+                _ => Err(BasisError::permanent(
+                    ErrorCode::Conflict,
+                    format!("connection request from {} was already rejected", self.remote),
+                )),
+            };
         }
         let peer = self.manager.admit(self.conn.clone(), self.remote.ip(), true, 0);
-        let tx = self.control_tx.blocking_lock().take();
-        let rx = self.control_rx.blocking_lock().take();
+        let peer_ref: NetPeerRef = Arc::new(peer.clone());
+        *self.accepted.lock() = Some(peer_ref.clone());
+        let tx = self.control_tx.lock().take();
+        let rx = self.control_rx.lock().take();
         let state = peer.state.clone();
         let manager = self.manager.clone();
-        IrohRuntime::spawn(async move {
+        let remote = self.remote;
+        if let Err(e) = IrohRuntime::spawn(async move {
             if let Some(mut tx) = tx {
                 let mut msg = vec![CTL_ACCEPTED];
                 msg.extend_from_slice(&(state.id as u16).to_le_bytes());
                 if tx.write_all(&msg).await.is_err() {
                     state.conn.close(VarInt::from_u32(CLOSE_PROTOCOL), b"accept write failed");
+                    manager.finish_peer(state, DisconnectReason::ConnectionFailed, None);
                     return;
                 }
                 *state.control_tx.lock().await = Some(tx);
             }
             manager.run_peer(state, rx).await;
-        });
-        Arc::new(peer)
+        }) {
+            // No runtime to run the peer on: undo the admission so the caller sees the failure
+            // rather than a peer that never speaks.
+            self.conn.close(VarInt::from_u32(CLOSE_PROTOCOL), b"no runtime");
+            self.manager.finish_peer(peer.state.clone(), DisconnectReason::ConnectionFailed, None);
+            return Err(e.context(format!("accepting the connection from {remote}")));
+        }
+        Ok(peer_ref)
     }
 
-    fn reject(&self, w: &NetDataWriter) {
-        if self.decided.swap(true, Ordering::SeqCst) {
-            return;
+    fn reject(&self, w: &NetDataWriter) -> BasisResult<()> {
+        if let Err(current) =
+            self.decided.compare_exchange(REQUEST_UNDECIDED, REQUEST_REJECTED, Ordering::SeqCst, Ordering::SeqCst)
+        {
+            return if current == REQUEST_REJECTED {
+                Ok(())
+            } else {
+                Err(BasisError::permanent(
+                    ErrorCode::Conflict,
+                    format!("connection request from {} was already accepted", self.remote),
+                ))
+            };
         }
         let data = w.copy_data();
         let conn = self.conn.clone();
-        let tx = self.control_tx.blocking_lock().take();
-        IrohRuntime::spawn(async move {
+        let tx = self.control_tx.lock().take();
+        let spawned = IrohRuntime::spawn(async move {
             if let Some(mut tx) = tx {
                 let mut msg = vec![CTL_REJECTED];
-                msg.extend_from_slice(&(data.len() as u32).to_le_bytes());
+                msg.extend_from_slice(&(u32::try_from(data.len()).unwrap_or(u32::MAX)).to_le_bytes());
                 msg.extend_from_slice(&data);
                 let _ = tx.write_all(&msg).await;
                 let _ = tx.finish();
@@ -434,6 +534,12 @@ impl ConnectionRequest for IrohConnectionRequest {
             }
             conn.close(VarInt::from_u32(CLOSE_REJECTED), b"rejected");
         });
+        if let Err(e) = spawned {
+            // The verdict cannot be sent; closing the connection still refuses it.
+            self.conn.close(VarInt::from_u32(CLOSE_REJECTED), b"rejected");
+            return Err(e.context(format!("rejecting the connection from {}", self.remote)));
+        }
+        Ok(())
     }
 }
 
@@ -560,10 +666,10 @@ impl IrohNetManager {
     /// Probes a server for its info line (the counterpart of the unconnected UDP query).
     pub async fn probe(target: ConnectionTarget, timeout_ms: i32) -> ServerProbeResult {
         let mut result = ServerProbeResult::default();
-        let addr = match ManagerInner::parse_target(&target) {
+        let addr = match ManagerInner::resolve_target(&target).await {
             Ok(a) => a,
             Err(e) => {
-                result.error = e;
+                result.error = e.to_string();
                 return result;
             }
         };
@@ -632,39 +738,68 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 impl ManagerInner {
-    fn parse_target(target: &ConnectionTarget) -> Result<EndpointAddr, String> {
+    /// Parses a connection target into an endpoint address. IP literals are applied here; a
+    /// host name is returned separately for [`resolve_target`](Self::resolve_target), because
+    /// name resolution blocks and must not run on a transport worker.
+    fn parse_target(target: &ConnectionTarget) -> BasisResult<(EndpointAddr, Option<(String, u16)>)> {
         let mut t = target.clone();
         if t.get(ConnectionTargetKeys::ENDPOINT_ID).is_none() {
             use super::connection_target::IConnectionTargetParser;
             IrohConnectionTargetParser.parse(&mut t);
         }
-        let id_text = t.get(ConnectionTargetKeys::ENDPOINT_ID).ok_or_else(|| "connection string has no endpoint id".to_string())?;
+        let id_text = t
+            .get(ConnectionTargetKeys::ENDPOINT_ID)
+            .ok_or_else(|| BasisError::permanent(ErrorCode::InvalidArgument, "connection string has no endpoint id"))?;
         let id = Self::parse_endpoint_id(&id_text)?;
         let mut addr = EndpointAddr::new(id);
+        let mut host_to_resolve = None;
         if let Some(host) = t.get(ConnectionTargetKeys::ADDRESS) {
-            let port = t.get(ConnectionTargetKeys::PORT).and_then(|p| p.parse::<u16>().ok()).unwrap_or(LNLConnectionTargetParser::DEFAULT_PORT);
-            if let Ok(ip) = host.parse::<IpAddr>() {
-                addr = addr.with_ip_addr(SocketAddr::new(ip, port));
-            } else if let Ok(resolved) = std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), port)) {
-                for s in resolved {
-                    addr = addr.with_ip_addr(s);
-                }
+            let port = t
+                .get(ConnectionTargetKeys::PORT)
+                .and_then(|p| p.parse::<u16>().ok())
+                .unwrap_or(LNLConnectionTargetParser::DEFAULT_PORT);
+            match host.parse::<IpAddr>() {
+                Ok(ip) => addr = addr.with_ip_addr(SocketAddr::new(ip, port)),
+                Err(_) => host_to_resolve = Some((host, port)),
             }
         }
-        if let Some(relay) = t.get(ConnectionTargetKeys::RELAY_URL)
-            && let Ok(url) = relay.parse()
-        {
+        if let Some(relay) = t.get(ConnectionTargetKeys::RELAY_URL) {
+            let url = relay.parse().map_err(|e| {
+                BasisError::permanent(ErrorCode::InvalidArgument, format!("'{relay}' is not a relay url: {e}"))
+            })?;
             addr = addr.with_relay_url(url);
+        }
+        Ok((addr, host_to_resolve))
+    }
+
+    /// [`parse_target`](Self::parse_target) plus asynchronous name resolution. A name server
+    /// that does not answer is a transient fault; a name that does not exist is permanent.
+    async fn resolve_target(target: &ConnectionTarget) -> BasisResult<EndpointAddr> {
+        let (mut addr, host) = Self::parse_target(target)?;
+        if let Some((host, port)) = host {
+            let resolved = tokio::net::lookup_host((host.as_str(), port)).await.map_err(|e| {
+                let kind = basis_error::io_fault_kind(e.kind());
+                BasisError::with_source(kind, ErrorCode::Dns, format!("could not resolve '{host}'"), e)
+            })?;
+            let mut any = false;
+            for socket in resolved {
+                addr = addr.with_ip_addr(socket);
+                any = true;
+            }
+            if !any {
+                return Err(BasisError::permanent(ErrorCode::Dns, format!("'{host}' has no addresses")));
+            }
         }
         Ok(addr)
     }
 
-    fn parse_endpoint_id(text: &str) -> Result<EndpointId, String> {
+    fn parse_endpoint_id(text: &str) -> BasisResult<EndpointId> {
         let text = text.trim();
         if let Ok(id) = EndpointId::from_z32(text) {
             return Ok(id);
         }
-        text.parse::<EndpointId>().map_err(|e| format!("'{text}' is not an endpoint id: {e}"))
+        text.parse::<EndpointId>()
+            .map_err(|e| BasisError::permanent(ErrorCode::InvalidArgument, format!("'{text}' is not an endpoint id: {e}")))
     }
 
     fn allocate_id(&self) -> i32 {
@@ -713,6 +848,7 @@ impl ManagerInner {
             notify: Notify::new(),
             control_tx: tokio::sync::Mutex::new(None),
             ping_sent_at: Mutex::new(None),
+            warned_too_large: AtomicBool::new(false),
         });
         let peer = IrohNetPeer::new(state);
         self.peers.insert(id, peer.clone());
@@ -759,7 +895,7 @@ impl ManagerInner {
             .build()
     }
 
-    async fn bind(self: Arc<Self>, ipv4: IpAddr, ipv6: IpAddr, port: u16) -> Result<(), String> {
+    async fn bind(self: Arc<Self>, ipv4: IpAddr, ipv6: IpAddr, port: u16) -> BasisResult<()> {
         let relay_mode = match self.transport_config.relay_mode.trim().to_ascii_lowercase().as_str() {
             "disabled" | "none" | "off" => RelayMode::Disabled,
             "custom" => {
@@ -774,27 +910,46 @@ impl ManagerInner {
             "staging" => RelayMode::Staging,
             _ => RelayMode::Default,
         };
-        let mut builder = Endpoint::builder(presets::Minimal)
-            .secret_key(self.secret_key.clone())
-            .alpns(vec![BASIS_ALPN.to_vec(), BASIS_PROBE_ALPN.to_vec()])
-            .relay_mode(relay_mode)
-            .transport_config(self.build_transport_config());
-        if let IpAddr::V4(v4) = ipv4 {
-            builder = builder.bind_addr(SocketAddr::new(IpAddr::V4(v4), port)).map_err(|e| e.to_string())?;
-        }
-        if let IpAddr::V6(v6) = ipv6 {
-            // Same port on both families when one was asked for; an OS-picked port (0) is
-            // picked independently per socket.
-            match builder.bind_addr(SocketAddr::new(IpAddr::V6(v6), port)) {
-                Ok(b) => builder = b,
-                Err(e) => BNL::log_warning(format!("IPv6 bind skipped: {e}")),
+        let bad_addr = |addr: SocketAddr, e: iroh::endpoint::InvalidSocketAddr| {
+            BasisError::with_source(FaultKind::Permanent, ErrorCode::Config, format!("cannot bind {addr}"), e)
+        };
+        let build = |with_v6: bool| -> BasisResult<iroh::endpoint::Builder> {
+            let mut builder = Endpoint::builder(presets::Minimal)
+                .secret_key(self.secret_key.clone())
+                .alpns(vec![BASIS_ALPN.to_vec(), BASIS_PROBE_ALPN.to_vec()])
+                .relay_mode(relay_mode.clone())
+                .transport_config(self.build_transport_config());
+            if let IpAddr::V4(v4) = ipv4 {
+                let addr = SocketAddr::new(IpAddr::V4(v4), port);
+                builder = builder.bind_addr(addr).map_err(|e| bad_addr(addr, e))?;
             }
-        }
-        let endpoint = builder.bind().await.map_err(|e| e.to_string())?;
+            if with_v6 && let IpAddr::V6(v6) = ipv6 {
+                // Same port on both families when one was asked for; an OS-picked port (0) is
+                // picked independently per socket.
+                let addr = SocketAddr::new(IpAddr::V6(v6), port);
+                builder = builder.bind_addr(addr).map_err(|e| bad_addr(addr, e))?;
+            }
+            Ok(builder)
+        };
+        let bind_error = |e: iroh::endpoint::BindError| {
+            // A port still in TIME_WAIT is worth retrying; a bad address or config is not.
+            let kind = basis_error::fault_kind_from_chain(&e).unwrap_or(FaultKind::Permanent);
+            BasisError::with_source(kind, ErrorCode::Transport, format!("binding the iroh endpoint on port {port} failed"), e)
+        };
+        let endpoint = match build(true)?.bind().await {
+            Ok(endpoint) => endpoint,
+            Err(e) if matches!(ipv6, IpAddr::V6(_)) => {
+                // A host without IPv6 must still come up: retry on IPv4 alone, as the C# server
+                // did when its second socket failed to bind.
+                BNL::log_warning(format!("[iroh] bind with IPv6 failed ({e}); retrying IPv4 only"));
+                build(false)?.bind().await.map_err(bind_error)?
+            }
+            Err(e) => return Err(bind_error(e)),
+        };
         *self.endpoint.write() = Some(endpoint.clone());
         self.running.store(true, Ordering::SeqCst);
         let me = self.clone();
-        let task = IrohRuntime::spawn(async move { me.accept_loop(endpoint).await });
+        let task = IrohRuntime::spawn(async move { me.accept_loop(endpoint).await })?;
         *self.accept_task.lock() = Some(task);
         Ok(())
     }
@@ -809,7 +964,7 @@ impl ManagerInner {
                 _ => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
             };
             let me = self.clone();
-            IrohRuntime::spawn(async move {
+            IrohRuntime::spawn_detached(async move {
                 let accepting = match incoming.accept() {
                     Ok(a) => a,
                     Err(e) => {
@@ -863,20 +1018,25 @@ impl ManagerInner {
         let request = Arc::new(IrohConnectionRequest {
             manager: self.clone(),
             conn: conn.clone(),
-            control_tx: tokio::sync::Mutex::new(Some(tx)),
-            control_rx: tokio::sync::Mutex::new(Some(rx)),
+            control_tx: Mutex::new(Some(tx)),
+            control_rx: Mutex::new(Some(rx)),
             data: payload,
             remote,
-            decided: AtomicBool::new(false),
+            decided: std::sync::atomic::AtomicU8::new(REQUEST_UNDECIDED),
+            accepted: Mutex::new(None),
         });
         // Raised on a blocking thread: the server's handler is synchronous and may take the
         // tokio thread for longer than a scheduler slot should allow.
         let listener = self.listener.clone();
         let req = request.clone();
-        let _ = tokio::task::spawn_blocking(move || listener.raise_connection_request(req)).await;
-        if !request.decided.load(Ordering::SeqCst) {
+        if let Err(e) = tokio::task::spawn_blocking(move || listener.raise_connection_request(req)).await {
+            BNL::log_error(format!("[iroh] the connection request handler for {remote} did not complete: {e}"));
+        }
+        if !request.is_decided() {
             // No handler decided: LiteNetLib would time the request out.
-            request.reject(&NetDataWriter::new());
+            if let Err(e) = request.reject(&NetDataWriter::new()) {
+                BNL::log_warning(format!("[iroh] could not reject the undecided connection from {remote}: {e}"));
+            }
         }
     }
 
@@ -889,11 +1049,24 @@ impl ManagerInner {
             // OnNetworkAccepted as the real join, so this stays informational.
             self.listener.raise_peer_connected(Arc::new(peer.clone()));
         }
-        let sender = IrohRuntime::spawn(Self::sender_task(self.clone(), state.clone()));
-        let datagrams = IrohRuntime::spawn(Self::datagram_task(self.clone(), state.clone()));
-        let streams = IrohRuntime::spawn(Self::stream_accept_task(self.clone(), state.clone()));
-        let pinger = IrohRuntime::spawn(Self::ping_task(state.clone()));
-        let control = IrohRuntime::spawn(Self::control_task(self.clone(), state.clone(), control_rx));
+        let tasks = (|| -> BasisResult<_> {
+            Ok((
+                IrohRuntime::spawn(Self::sender_task(self.clone(), state.clone()))?,
+                IrohRuntime::spawn(Self::datagram_task(self.clone(), state.clone()))?,
+                IrohRuntime::spawn(Self::stream_accept_task(self.clone(), state.clone()))?,
+                IrohRuntime::spawn(Self::ping_task(state.clone()))?,
+                IrohRuntime::spawn(Self::control_task(self.clone(), state.clone(), control_rx))?,
+            ))
+        })();
+        let (sender, datagrams, streams, pinger, control) = match tasks {
+            Ok(tasks) => tasks,
+            Err(e) => {
+                BNL::log_error(format!("[iroh] peer {} cannot be served: {e}", state.id));
+                state.conn.close(VarInt::from_u32(CLOSE_PROTOCOL), b"no runtime");
+                self.finish_peer(state, DisconnectReason::ConnectionFailed, None);
+                return;
+            }
+        };
 
         let error = state.conn.closed().await;
         state.connected.store(false, Ordering::SeqCst);
@@ -944,15 +1117,30 @@ impl ManagerInner {
             // Voice first, then bulk, then reliable — the priority the C# transport gave voice.
             let next_datagram = state.priority_queue.lock().pop_front().or_else(|| state.bulk_queue.lock().pop_front());
             if let Some(frame) = next_datagram {
-                let channel = frame[0] & DATAGRAM_CHANNEL_MASK;
-                state.queued_per_channel[usize::from(channel)].fetch_sub(1, Ordering::Relaxed);
+                let channel = frame.first().copied().unwrap_or(0) & DATAGRAM_CHANNEL_MASK;
+                if let Some(counter) = state.queued_per_channel.get(usize::from(channel)) {
+                    counter.fetch_sub(1, Ordering::Relaxed);
+                }
                 let len = frame.len();
                 match state.conn.send_datagram_wait(frame).await {
                     Ok(()) => self.record_sent(len),
-                    Err(_) => {
-                        if !state.connected.load(Ordering::Relaxed) {
-                            return;
+                    Err(iroh::endpoint::SendDatagramError::TooLarge) => {
+                        // The path MTU shrank under a frame that fitted when it was queued. It
+                        // is unreliable traffic: drop it, count it, say so once.
+                        self.unreliable_dropped.fetch_add(1, Ordering::Relaxed);
+                        if !state.warned_too_large.swap(true, Ordering::Relaxed) {
+                            BNL::log_warning(format!(
+                                "[iroh] peer {}: a {len} byte datagram no longer fits the path MTU; dropping such frames",
+                                state.id
+                            ));
                         }
+                    }
+                    Err(iroh::endpoint::SendDatagramError::ConnectionLost(_)) => return,
+                    Err(e) => {
+                        // Datagrams disabled or unsupported: the peer cannot speak this protocol.
+                        BNL::log_error(format!("[iroh] peer {}: datagrams unavailable ({e}); closing", state.id));
+                        state.conn.close(VarInt::from_u32(CLOSE_PROTOCOL), b"datagrams unavailable");
+                        return;
                     }
                 }
                 continue;
@@ -976,11 +1164,12 @@ impl ManagerInner {
                 Some(Outgoing::Disconnect { data, code }) => {
                     if let Some(tx) = state.control_tx.lock().await.as_mut() {
                         let mut msg = vec![CTL_DISCONNECT];
-                        msg.extend_from_slice(&(data.len() as u32).to_le_bytes());
+                        let data: Vec<u8> = data.into_iter().take(MAX_FRAME_BYTES).collect();
+                        msg.extend_from_slice(&(u32::try_from(data.len()).unwrap_or(u32::MAX)).to_le_bytes());
                         msg.extend_from_slice(&data);
                         let _ = tx.write_all(&msg).await;
                     }
-                    for (_, s) in ordered_streams.drain() {
+                    for (_, mut s) in ordered_streams.drain() {
                         let _ = s.finish();
                     }
                     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -997,14 +1186,17 @@ impl ManagerInner {
     }
 
     async fn send_on_ordered_stream(state: &PeerState, streams: &mut HashMap<u8, SendStream>, channel: u8, data: Bytes) -> Result<(), ()> {
-        if !streams.contains_key(&channel) {
-            let mut s = state.conn.open_uni().await.map_err(|_| ())?;
-            s.write_all(&[STREAM_RELIABLE_ORDERED, channel]).await.map_err(|_| ())?;
-            streams.insert(channel, s);
-        }
-        let s = streams.get_mut(&channel).unwrap();
+        let s = match streams.entry(channel) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let mut s = state.conn.open_uni().await.map_err(|_| ())?;
+                s.write_all(&[STREAM_RELIABLE_ORDERED, channel]).await.map_err(|_| ())?;
+                entry.insert(s)
+            }
+        };
+        let len = u32::try_from(data.len()).map_err(|_| ())?;
         let mut frame = BytesMut::with_capacity(4 + data.len());
-        frame.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        frame.extend_from_slice(&len.to_le_bytes());
         frame.extend_from_slice(&data);
         if s.write_all(&frame).await.is_err() {
             streams.remove(&channel);
@@ -1015,9 +1207,10 @@ impl ManagerInner {
 
     async fn send_on_fresh_stream(state: &PeerState, channel: u8, data: Bytes) -> Result<(), ()> {
         let mut s = state.conn.open_uni().await.map_err(|_| ())?;
+        let len = u32::try_from(data.len()).map_err(|_| ())?;
         let mut frame = BytesMut::with_capacity(6 + data.len());
         frame.extend_from_slice(&[STREAM_RELIABLE_UNORDERED, channel]);
-        frame.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        frame.extend_from_slice(&len.to_le_bytes());
         frame.extend_from_slice(&data);
         s.write_all(&frame).await.map_err(|_| ())?;
         let _ = s.finish();
@@ -1032,21 +1225,22 @@ impl ManagerInner {
             }
             *state.last_packet.lock() = Instant::now();
             self.record_received(datagram.len());
-            let header = datagram[0];
+            let Some(&header) = datagram.first() else { continue };
             let channel = header & DATAGRAM_CHANNEL_MASK;
             if (header & DATAGRAM_SEQUENCED_FLAG) != 0 {
-                if datagram.len() < 3 {
+                let (Some(&lo), Some(&hi)) = (datagram.get(1), datagram.get(2)) else {
                     continue;
-                }
-                let seq = u16::from_le_bytes([datagram[1], datagram[2]]);
+                };
+                let seq = u16::from_le_bytes([lo, hi]);
                 {
                     let mut last = state.sequenced_in.lock();
-                    if let Some(prev) = last[usize::from(channel)]
+                    let Some(slot) = last.get_mut(usize::from(channel)) else { continue };
+                    if let Some(prev) = *slot
                         && (seq.wrapping_sub(prev) as i16) <= 0
                     {
                         continue; // older than what we already delivered
                     }
-                    last[usize::from(channel)] = Some(seq);
+                    *slot = Some(seq);
                 }
                 let reader = NetPacketReader::new(datagram.slice(3..));
                 self.listener.raise_network_receive(peer.clone(), reader, channel, DeliveryMethod::Sequenced);
@@ -1061,7 +1255,7 @@ impl ManagerInner {
         while let Ok(rx) = state.conn.accept_uni().await {
             let me = self.clone();
             let st = state.clone();
-            IrohRuntime::spawn(async move { me.stream_reader(st, rx).await });
+            IrohRuntime::spawn_detached(async move { me.stream_reader(st, rx).await });
         }
     }
 
@@ -1142,12 +1336,13 @@ impl ManagerInner {
                     }
                 }
                 CTL_PONG => {
-                    let mut buf = [0u8; 16];
-                    if rx.read_exact(&mut buf).await.is_err() {
+                    let mut sent = [0u8; 8];
+                    let mut theirs = [0u8; 8];
+                    if rx.read_exact(&mut sent).await.is_err() || rx.read_exact(&mut theirs).await.is_err() {
                         return None;
                     }
-                    let sent_ticks = i64::from_le_bytes(buf[..8].try_into().unwrap());
-                    let their_ticks = i64::from_le_bytes(buf[8..].try_into().unwrap());
+                    let sent_ticks = i64::from_le_bytes(sent);
+                    let their_ticks = i64::from_le_bytes(theirs);
                     let matches = state.ping_sent_at.lock().map(|(t, _)| t == sent_ticks).unwrap_or(false);
                     if matches {
                         let now_ticks = utc_now_ticks();
@@ -1190,13 +1385,9 @@ impl ManagerInner {
     }
 
     /// Client side: dial, send the connect payload, wait for the verdict.
-    async fn connect_async(self: Arc<Self>, addr: EndpointAddr, payload: Vec<u8>, shared: Arc<PendingShared>) {
-        let Some(endpoint) = self.endpoint.read().clone() else {
-            BNL::log_error("[iroh] connect before start");
-            return;
-        };
-        let remote_ip = addr.ip_addrs().next().map(|s| s.ip()).unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-        let failed = |me: &Arc<Self>, reason: DisconnectReason, data: Option<Vec<u8>>| {
+    async fn connect_async(self: Arc<Self>, target: ConnectionTarget, payload: Vec<u8>, shared: Arc<PendingShared>) {
+        let mut remote_ip = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let failed = |me: &Arc<Self>, remote_ip: IpAddr, reason: DisconnectReason, data: Option<Vec<u8>>| {
             // No live peer yet: the pending peer the caller holds is the one that "disconnected",
             // so the listener hears the outcome exactly as LiteNetLib reported a failed connect.
             shared.cancelled.store(true, Ordering::SeqCst);
@@ -1206,17 +1397,36 @@ impl ManagerInner {
                 DisconnectInfo { reason, socket_error_code: 0, additional_data: NetPacketReader::new(data.unwrap_or_default()) },
             );
         };
+        let Some(endpoint) = self.endpoint.read().clone() else {
+            BNL::log_error("[iroh] connect before start");
+            failed(&self, remote_ip, DisconnectReason::ConnectionFailed, None);
+            return;
+        };
+        let addr = match Self::resolve_target(&target).await {
+            Ok(addr) => addr,
+            Err(e) => {
+                BNL::log_warning(format!("[iroh] connect target could not be resolved: {e}"));
+                failed(&self, remote_ip, DisconnectReason::UnknownHost, None);
+                return;
+            }
+        };
+        remote_ip = addr.ip_addrs().next().map(|s| s.ip()).unwrap_or(remote_ip);
+        if payload.len() > MAX_FRAME_BYTES {
+            BNL::log_error(format!("[iroh] connect payload of {} bytes exceeds {MAX_FRAME_BYTES}", payload.len()));
+            failed(&self, remote_ip, DisconnectReason::ConnectionFailed, None);
+            return;
+        }
         let conn = match endpoint.connect(addr, BASIS_ALPN).await {
             Ok(c) => c,
             Err(e) => {
                 BNL::log_warning(format!("[iroh] connect failed: {e}"));
-                failed(&self, DisconnectReason::ConnectionFailed, None);
+                failed(&self, remote_ip, DisconnectReason::ConnectionFailed, None);
                 return;
             }
         };
         if shared.cancelled.load(Ordering::SeqCst) {
             conn.close(VarInt::from_u32(CLOSE_NORMAL), b"cancelled");
-            failed(&self, DisconnectReason::DisconnectPeerCalled, None);
+            failed(&self, remote_ip, DisconnectReason::DisconnectPeerCalled, None);
             return;
         }
         let (bulk, priority) = self.queue_limits();
@@ -1245,6 +1455,7 @@ impl ManagerInner {
             notify: Notify::new(),
             control_tx: tokio::sync::Mutex::new(None),
             ping_sent_at: Mutex::new(None),
+            warned_too_large: AtomicBool::new(false),
         });
         *shared.slot.lock() = Some(live.clone());
         self.peers.insert(live.id, IrohNetPeer::new(live.clone()));
@@ -1257,7 +1468,7 @@ impl ManagerInner {
             }
         };
         let mut msg = vec![CTL_CONNECT];
-        msg.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        msg.extend_from_slice(&(u32::try_from(payload.len()).unwrap_or(u32::MAX)).to_le_bytes());
         msg.extend_from_slice(&payload);
         if tx.write_all(&msg).await.is_err() {
             self.finish_peer(live, DisconnectReason::ConnectionFailed, None);
@@ -1321,11 +1532,14 @@ async fn read_control_frame(rx: &mut RecvStream, expected_op: u8) -> Result<Vec<
 }
 
 impl NetManager for IrohNetManager {
-    fn start(&self, ipv4_address: IpAddr, ipv6_address: IpAddr, set_port: u16) {
-        let inner = self.inner.clone();
-        if let Err(e) = IrohRuntime::block_on(inner.bind(ipv4_address, ipv6_address, set_port)) {
-            BNL::log_error(format!("[iroh] bind failed: {e}"));
+    fn start(&self, ipv4_address: IpAddr, ipv6_address: IpAddr, set_port: u16) -> BasisResult<()> {
+        if self.inner.running.load(Ordering::SeqCst) {
+            return Err(BasisError::permanent(ErrorCode::Conflict, "the iroh transport is already started"));
         }
+        let inner = self.inner.clone();
+        IrohRuntime::block_on(inner.bind(ipv4_address, ipv6_address, set_port))
+            .and_then(|r| r)
+            .map_err(|e| e.context(format!("starting the iroh transport on port {set_port}")))
     }
 
     fn stop(&self) {
@@ -1338,8 +1552,10 @@ impl NetManager for IrohNetManager {
         if let Some(task) = self.inner.accept_task.lock().take() {
             task.abort();
         }
-        if let Some(ep) = endpoint {
-            IrohRuntime::block_on(async move { ep.close().await });
+        if let Some(ep) = endpoint
+            && let Err(e) = IrohRuntime::block_on(async move { ep.close().await })
+        {
+            BNL::log_warning(format!("[iroh] endpoint close did not complete: {e}"));
         }
         for p in peers {
             self.inner.finish_peer(p.state.clone(), DisconnectReason::DisconnectPeerCalled, None);
@@ -1349,7 +1565,7 @@ impl NetManager for IrohNetManager {
         self.inner.next_id.store(0, Ordering::Relaxed);
     }
 
-    fn connect(&self, target: &str, port: u16, writer: &NetDataWriter) -> Option<NetPeerRef> {
+    fn connect(&self, target: &str, port: u16, writer: &NetDataWriter) -> BasisResult<NetPeerRef> {
         let raw = if target.contains('@') || port == 0 { target.to_string() } else { format!("{target}:{port}") };
         let mut ct = ConnectionTarget::new(BasisNetworkStackRegistry::IROH_ID, &raw);
         {
@@ -1359,21 +1575,18 @@ impl NetManager for IrohNetManager {
         if ct.get(ConnectionTargetKeys::ENDPOINT_ID).is_none() && !target.contains('@') {
             // "host:port" plus a separate endpoint id is what the C# signature could not carry;
             // callers pass "id@host" as the address instead.
-            BNL::log_error("[iroh] connect needs an endpoint id: use 'endpointid@host:port'");
-            return None;
+            return Err(BasisError::permanent(
+                ErrorCode::InvalidArgument,
+                format!("'{target}' has no endpoint id: use 'endpointid@host:port'"),
+            ));
         }
-        let addr = match ManagerInner::parse_target(&ct) {
-            Ok(a) => a,
-            Err(e) => {
-                BNL::log_error(format!("[iroh] {e}"));
-                return None;
-            }
-        };
-        let inner = self.inner.clone();
+        // Validate now so a bad target fails at the call rather than inside the dial task; the
+        // host name, if any, is resolved on the runtime.
+        let (addr, _) = ManagerInner::parse_target(&ct).map_err(|e| e.context(format!("parsing connect target '{target}'")))?;
         if self.inner.endpoint.read().is_none() {
-            BNL::log_error("[iroh] connect before start");
-            return None;
+            return Err(BasisError::permanent(ErrorCode::Conflict, "connect before the iroh transport was started"));
         }
+        let inner = self.inner.clone();
         let remote_ip = addr.ip_addrs().next().map(|s| s.ip()).unwrap_or(IpAddr::V6(Ipv6Addr::UNSPECIFIED));
         let shared = Arc::new(PendingShared {
             slot: Mutex::new(None),
@@ -1384,8 +1597,9 @@ impl NetManager for IrohNetManager {
         });
         let peer = PendingPeer { remote_ip, shared: shared.clone() };
         let payload = writer.copy_data();
-        IrohRuntime::spawn(async move { inner.connect_async(addr, payload, shared).await });
-        Some(Arc::new(peer))
+        IrohRuntime::spawn(async move { inner.connect_async(ct, payload, shared).await })
+            .map_err(|e| e.context(format!("dialing '{target}'")))?;
+        Ok(Arc::new(peer))
     }
 
     fn send_unconnected_message(&self, writer: &NetDataWriter, remote_end_point: SocketAddr) -> bool {
@@ -1393,7 +1607,7 @@ impl NetManager for IrohNetManager {
             return false;
         };
         let data = writer.copy_data();
-        IrohRuntime::spawn(async move {
+        IrohRuntime::spawn_detached(async move {
             if let Ok(mut tx) = conn.open_uni().await {
                 let _ = tx.write_all(&data).await;
                 let _ = tx.finish();
@@ -1479,7 +1693,10 @@ impl NetPeer for PendingPeer {
         }
     }
 
-    fn send(&self, data: &[u8], channel_number: u8, delivery_method: DeliveryMethod) {
+    fn send(&self, data: &[u8], channel_number: u8, delivery_method: DeliveryMethod) -> Result<(), SendError> {
+        if channel_number >= BasisNetworkCommons::TOTAL_CHANNELS {
+            return Err(SendError::BadChannel { channel: channel_number, max: BasisNetworkCommons::TOTAL_CHANNELS });
+        }
         match self.live() {
             Some(p) => p.send(data, channel_number, delivery_method),
             None => {
@@ -1491,13 +1708,23 @@ impl NetPeer for PendingPeer {
                         data: Bytes::copy_from_slice(data),
                     });
                 }
+                Ok(())
             }
         }
     }
 
-    fn send_unreliable_raw_merge(&self, data: &[u8], offset: usize, length: usize, channel_number: u8, patch_offset: i32, patch_value: u8) {
-        if let Some(p) = self.live() {
-            p.send_unreliable_raw_merge(data, offset, length, channel_number, patch_offset, patch_value);
+    fn send_unreliable_raw_merge(
+        &self,
+        data: &[u8],
+        offset: usize,
+        length: usize,
+        channel_number: u8,
+        patch_offset: i32,
+        patch_value: u8,
+    ) -> Result<(), SendError> {
+        match self.live() {
+            Some(p) => p.send_unreliable_raw_merge(data, offset, length, channel_number, patch_offset, patch_value),
+            None => Ok(()),
         }
     }
 

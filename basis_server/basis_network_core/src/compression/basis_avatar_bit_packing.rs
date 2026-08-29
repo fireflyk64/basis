@@ -75,7 +75,7 @@ impl BasisAvatarBitPacking {
     }
 
     /// Encodes one world-space axis value (metres) as signed int24 millimetres, little-endian.
-    pub fn encode_axis_mm(meters: f32, dst: &mut [u8], offset: usize) {
+    pub fn encode_axis_mm(meters: f32, dst: &mut [u8], offset: usize) -> bool {
         let mm_f = meters * 1000.0;
         let mm: i32 = if mm_f.is_nan() {
             0
@@ -86,60 +86,68 @@ impl BasisAvatarBitPacking {
         } else {
             round_half_even(mm_f) as i32
         };
-        dst[offset] = mm as u8;
-        dst[offset + 1] = (mm >> 8) as u8;
-        dst[offset + 2] = (mm >> 16) as u8;
+        let Some(out) = dst.get_mut(offset..offset.saturating_add(3)) else {
+            return false;
+        };
+        out.copy_from_slice(&[mm as u8, (mm >> 8) as u8, (mm >> 16) as u8]);
+        true
     }
 
-    /// Decodes one signed int24 millimetre axis back to metres.
-    pub fn decode_axis_mm(src: &[u8], offset: usize) -> f32 {
-        let mut mm = i32::from(src[offset]) | (i32::from(src[offset + 1]) << 8) | (i32::from(src[offset + 2]) << 16);
+    /// Decodes one signed int24 millimetre axis back to metres. `None` when `src` is too short.
+    pub fn decode_axis_mm(src: &[u8], offset: usize) -> Option<f32> {
+        let bytes = src.get(offset..offset.checked_add(3)?)?;
+        let mut mm = i32::from(bytes[0]) | (i32::from(bytes[1]) << 8) | (i32::from(bytes[2]) << 16);
         // Sign-extend from 24 bits.
         mm = (mm << 8) >> 8;
-        mm as f32 * 0.001
+        Some(mm as f32 * 0.001)
     }
 
-    /// Writes the whole 3-axis position block (metres) as int24 millimetres.
-    pub fn encode_position(x: f32, y: f32, z: f32, dst: &mut [u8], offset: usize) {
-        Self::encode_axis_mm(x, dst, offset);
-        Self::encode_axis_mm(y, dst, offset + 3);
-        Self::encode_axis_mm(z, dst, offset + 6);
+    /// Writes the whole 3-axis position block (metres) as int24 millimetres. False — and nothing
+    /// written — when `dst` has no room for all nine bytes at `offset`.
+    pub fn encode_position(x: f32, y: f32, z: f32, dst: &mut [u8], offset: usize) -> bool {
+        if dst.get(offset..offset.saturating_add(9)).is_none() {
+            return false;
+        }
+        Self::encode_axis_mm(x, dst, offset) && Self::encode_axis_mm(y, dst, offset + 3) && Self::encode_axis_mm(z, dst, offset + 6)
     }
 
-    /// Reads the whole 3-axis position block back into metres as `(x, y, z)`.
-    pub fn decode_position(src: &[u8], offset: usize) -> (f32, f32, f32) {
-        (
-            Self::decode_axis_mm(src, offset),
-            Self::decode_axis_mm(src, offset + 3),
-            Self::decode_axis_mm(src, offset + 6),
-        )
+    /// Reads the whole 3-axis position block back into metres as `(x, y, z)`; `None` when `src`
+    /// is too short.
+    pub fn decode_position(src: &[u8], offset: usize) -> Option<(f32, f32, f32)> {
+        Some((
+            Self::decode_axis_mm(src, offset)?,
+            Self::decode_axis_mm(src, offset + 3)?,
+            Self::decode_axis_mm(src, offset + 6)?,
+        ))
     }
 
     /// Packs a hips local-position delta (metres) into `WRITE_HIPS_DELTA` bytes as three signed
     /// 13-bit axes. Overwrites the whole field, so callers need not pre-clear it.
-    pub fn encode_hips_delta(x: f32, y: f32, z: f32, dst: &mut [u8], offset: usize) {
+    pub fn encode_hips_delta(x: f32, y: f32, z: f32, dst: &mut [u8], offset: usize) -> bool {
         let packed: u64 = u64::from(Self::quantize_hips_axis(x))
             | (u64::from(Self::quantize_hips_axis(y)) << Self::HIPS_DELTA_BITS)
             | (u64::from(Self::quantize_hips_axis(z)) << (2 * Self::HIPS_DELTA_BITS));
-        dst[offset] = packed as u8;
-        dst[offset + 1] = (packed >> 8) as u8;
-        dst[offset + 2] = (packed >> 16) as u8;
-        dst[offset + 3] = (packed >> 24) as u8;
-        dst[offset + 4] = (packed >> 32) as u8;
+        let Some(out) = dst.get_mut(offset..offset.saturating_add(5)) else {
+            return false;
+        };
+        out.copy_from_slice(&[packed as u8, (packed >> 8) as u8, (packed >> 16) as u8, (packed >> 24) as u8, (packed >> 32) as u8]);
+        true
     }
 
-    /// Unpacks the three signed 13-bit axes written by [`Self::encode_hips_delta`].
-    pub fn decode_hips_delta(src: &[u8], offset: usize) -> (f32, f32, f32) {
-        let packed: u64 = u64::from(src[offset])
-            | (u64::from(src[offset + 1]) << 8)
-            | (u64::from(src[offset + 2]) << 16)
-            | (u64::from(src[offset + 3]) << 24)
-            | (u64::from(src[offset + 4]) << 32);
-        (
+    /// Unpacks the three signed 13-bit axes written by [`Self::encode_hips_delta`]; `None`
+    /// when `src` is too short.
+    pub fn decode_hips_delta(src: &[u8], offset: usize) -> Option<(f32, f32, f32)> {
+        let b = src.get(offset..offset.checked_add(5)?)?;
+        let packed: u64 = u64::from(b[0])
+            | (u64::from(b[1]) << 8)
+            | (u64::from(b[2]) << 16)
+            | (u64::from(b[3]) << 24)
+            | (u64::from(b[4]) << 32);
+        Some((
             Self::dequantize_hips_axis((packed & u64::from(Self::HIPS_DELTA_MASK)) as u32),
             Self::dequantize_hips_axis(((packed >> Self::HIPS_DELTA_BITS) & u64::from(Self::HIPS_DELTA_MASK)) as u32),
             Self::dequantize_hips_axis(((packed >> (2 * Self::HIPS_DELTA_BITS)) & u64::from(Self::HIPS_DELTA_MASK)) as u32),
-        )
+        ))
     }
 
     fn quantize_hips_axis(meters: f32) -> u32 {

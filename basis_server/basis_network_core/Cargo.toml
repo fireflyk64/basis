@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+basis_error = { workspace = true, features = ["tokio"] }
 basis_crypto = { path = "../contrib/crypto" }
 iroh.workspace = true
 iroh-base.workspace = true

@@ -18,7 +18,7 @@ pub use basis_config_xml_docs::{BasisConfigXmlDocs, ConfigXmlError, FieldDoc};
 pub use basis_population_scale::BasisPopulationScale;
 pub use basis_server_configuration::Configuration;
 pub use basis_transport_config_store::{BasisTransportConfigObject, BasisTransportConfigStore};
-pub use basis_tuning_profile::{BasisTunedSetting, BasisTuningProfile};
+pub use basis_tuning_profile::{BasisTunedSetting, BasisTuningProfile, TuningError};
 pub use iroh_transport_config::IrohTransportConfig;
 pub use lnl_transport_config::LNLTransportConfig;
 
@@ -38,6 +38,24 @@ pub enum FieldKind {
     RestrictionMode,
 }
 
+/// A field could not be set from its text form: the name is unknown to this build, or the
+/// value does not parse as the field's type.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ConfigFieldError {
+    #[error("'{field}' is not a setting in this build")]
+    UnknownField { field: String },
+    #[error("'{field}' cannot be set to '{value}': {reason}")]
+    BadValue { field: String, value: String, reason: String },
+}
+
+impl ConfigFieldError {
+    pub fn field(&self) -> &str {
+        match self {
+            ConfigFieldError::UnknownField { field } | ConfigFieldError::BadValue { field, .. } => field,
+        }
+    }
+}
+
 /// A config type that can be walked field-by-field by XML element name. Implemented by
 /// [`basis_xml_config!`].
 pub trait BasisXmlConfig: Default + Clone + Send + Sync + 'static {
@@ -51,8 +69,9 @@ pub trait BasisXmlConfig: Default + Clone + Send + Sync + 'static {
     fn field_kind(name: &str) -> Option<FieldKind>;
     /// The field's value in invariant-culture text, `None` for an unknown name.
     fn get_field(&self, name: &str) -> Option<String>;
-    /// Sets a field from its text form. `Err` names the reason (unknown field, unparseable value).
-    fn set_field(&mut self, name: &str, value: &str) -> Result<(), String>;
+    /// Sets a field from its text form. `Err` names the field and the reason (unknown field,
+    /// unparseable value).
+    fn set_field(&mut self, name: &str, value: &str) -> Result<(), ConfigFieldError>;
 
     /// Schema version found in a just-deserialised config; 0 when it predates versioning.
     fn config_version(&self) -> i32 {
@@ -132,7 +151,7 @@ macro_rules! basis_xml_config {
     (
         $(#[$m:meta])*
         pub struct $name:ident ($root:expr, $ver:expr) {
-            $( $(#[$fm:meta])* pub $field:ident : $ty:ty = $default:expr => $xml:expr [$kind:ident], )*
+            $( $(#[$fm:meta])* pub $field:ident : $ty:ty = $default:expr => $xml:literal [$kind:ident], )*
         }
     ) => {
         $(#[$m])*
@@ -170,11 +189,20 @@ macro_rules! basis_xml_config {
                 }
             }
 
-            fn set_field(&mut self, name: &str, value: &str) -> Result<(), String> {
+            fn set_field(&mut self, name: &str, value: &str) -> Result<(), $crate::configuration::ConfigFieldError> {
                 use $crate::configuration::ConfigFieldValue as _;
                 match name {
-                    $( $xml => { self.$field = <$ty>::parse_field(value)?; Ok(()) } )*
-                    _ => Err(format!("no such setting in this build: {name}")),
+                    $( $xml => {
+                        self.$field = <$ty>::parse_field(value).map_err(|reason| {
+                            $crate::configuration::ConfigFieldError::BadValue {
+                                field: name.to_string(),
+                                value: value.to_string(),
+                                reason,
+                            }
+                        })?;
+                        Ok(())
+                    } )*
+                    _ => Err($crate::configuration::ConfigFieldError::UnknownField { field: name.to_string() }),
                 }
             }
 

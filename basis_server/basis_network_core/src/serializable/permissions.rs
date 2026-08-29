@@ -4,6 +4,7 @@ use std::sync::LazyLock;
 
 use crate::io::{NetDataReader, NetDataWriter};
 use crate::BNL;
+use crate::io::net_data_reader::NetResult;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AdminRequest {
@@ -29,9 +30,10 @@ impl AdminRequest {
         }
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter, admin_request_mode: AdminRequestMode) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter, admin_request_mode: AdminRequestMode) -> NetResult<()> {
         self.message_index = admin_request_mode as u8;
         writer.put_byte(self.message_index);
+        Ok(())
     }
 }
 
@@ -276,9 +278,14 @@ impl PermissionCompression {
             return Vec::new();
         }
         let raw = strings.join("\0").into_bytes();
-        let mut e = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
-        e.write_all(&raw).expect("in-memory write");
-        let deflated = e.finish().expect("in-memory finish");
+        // Deflating into memory cannot fail in practice; if it ever does, the raw form is a
+        // valid encoding of the same strings, so fall back to it instead of failing the send.
+        let deflated = (|| -> std::io::Result<Vec<u8>> {
+            let mut e = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+            e.write_all(&raw)?;
+            e.finish()
+        })()
+        .unwrap_or_else(|_| raw.clone());
 
         // Pick whichever is smaller (1 byte flag overhead)
         let mut result;

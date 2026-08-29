@@ -16,7 +16,7 @@ impl BasisBoneRotationCompression {
     pub const SYNC_BONE_COUNT: usize = 51;
 
     /// Inverse of sqrt(2), the max magnitude of any non-dropped smallest-three component.
-    pub const INV_SQRT2: f32 = 0.70710678118;
+    pub const INV_SQRT2: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
     pub const WRITE_POSITION: usize = BasisAvatarBitPacking::WRITE_POSITION; // 9
     pub const WRITE_SCALE: usize = BasisAvatarBitPacking::WRITE_SCALE; // 2
@@ -157,6 +157,9 @@ impl BasisBoneRotationCompression {
     ];
 
     /// Half-range in radians for the primary angle, per slot.
+    // The literals are the exact values the C# client quantizes against; substituting the
+    // library constants would change the wire quantization by a few ulps.
+    #[allow(clippy::approx_constant)]
     pub const BONE_RANGE_A: [f32; 21] = [
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         2.7925, 2.7925, // elbows ±160°
@@ -168,6 +171,7 @@ impl BasisBoneRotationCompression {
     ];
 
     /// Half-range in radians for the secondary angle, per 2-DOF slot.
+    #[allow(clippy::approx_constant)]
     pub const BONE_RANGE_B: [f32; 21] = [
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         1.7453, 1.7453, // forearm twist ±100°

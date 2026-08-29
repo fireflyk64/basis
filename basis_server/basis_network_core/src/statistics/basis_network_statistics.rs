@@ -195,21 +195,21 @@ impl Snapshot {
     }
 
     /// Take an atomic cut *and* reset the live counters, then encode & (optionally) compress.
-    pub fn snapshot_reset_encode(compress: bool) -> Vec<u8> {
+    pub fn snapshot_reset_encode(compress: bool) -> std::io::Result<Vec<u8>> {
         let snap = BasisNetworkStatistics::snapshot_and_reset();
         let raw = Self::encode_snapshot(&snap);
-        if compress { Self::deflate(&raw) } else { raw }
+        if compress { Self::deflate(&raw) } else { Ok(raw) }
     }
 
     /// Encode a non-destructive snapshot (no reset). Useful for debugging.
-    pub fn encode_current(compress: bool) -> Vec<u8> {
+    pub fn encode_current(compress: bool) -> std::io::Result<Vec<u8>> {
         let snap = BasisNetworkStatistics::get_snapshot();
         let raw = Self::encode_snapshot(&snap);
-        if compress { Self::deflate(&raw) } else { raw }
+        if compress { Self::deflate(&raw) } else { Ok(raw) }
     }
 
     /// Decode snapshot bytes (after optional decompression).
-    pub fn decode(data: &[u8], compressed: bool) -> Result<Snapshot, String> {
+    pub fn decode(data: &[u8], compressed: bool) -> Result<Snapshot, StatisticsDecodeError> {
         let raw = if compressed { Self::inflate(data)? } else { data.to_vec() };
         Self::decode_snapshot(&raw)
     }
@@ -221,7 +221,7 @@ impl Snapshot {
         out
     }
 
-    fn decode_snapshot(raw: &[u8]) -> Result<Snapshot, String> {
+    fn decode_snapshot(raw: &[u8]) -> Result<Snapshot, StatisticsDecodeError> {
         let mut r = SpanReader { span: raw, pos: 0 };
         let in_per = Self::read_map(&mut r)?;
         let out_per = Self::read_map(&mut r)?;
@@ -241,7 +241,7 @@ impl Snapshot {
         }
     }
 
-    fn read_map(r: &mut SpanReader<'_>) -> Result<BTreeMap<u8, IndexStats>, String> {
+    fn read_map(r: &mut SpanReader<'_>) -> Result<BTreeMap<u8, IndexStats>, StatisticsDecodeError> {
         let n = r.read_uvar32()?;
         let mut dict = BTreeMap::new();
         for _ in 0..n {
@@ -261,20 +261,42 @@ impl Snapshot {
         s.push(value as u8);
     }
 
-    fn deflate(raw: &[u8]) -> Vec<u8> {
+    fn deflate(raw: &[u8]) -> std::io::Result<Vec<u8>> {
         use std::io::Write;
         let mut e = flate2::write::DeflateEncoder::new(Vec::with_capacity(raw.len() / 2), flate2::Compression::default());
-        e.write_all(raw).expect("in-memory write");
-        e.finish().expect("in-memory finish")
+        e.write_all(raw)?;
+        e.finish()
     }
 
-    fn inflate(comp: &[u8]) -> Result<Vec<u8>, String> {
+    fn inflate(comp: &[u8]) -> Result<Vec<u8>, StatisticsDecodeError> {
         use std::io::Read;
-        let mut d = flate2::read::DeflateDecoder::new(comp);
+        // A snapshot is a few KB; bound the inflate so a corrupt frame cannot balloon.
+        let mut d = flate2::read::DeflateDecoder::new(comp).take(Self::MAX_INFLATED_BYTES as u64 + 1);
         let mut out = Vec::with_capacity(512);
-        d.read_to_end(&mut out).map_err(|e| e.to_string())?;
+        d.read_to_end(&mut out)?;
+        if out.len() > Self::MAX_INFLATED_BYTES {
+            return Err(StatisticsDecodeError::TooLarge { max: Self::MAX_INFLATED_BYTES });
+        }
         Ok(out)
     }
+
+    /// Largest decoded snapshot accepted: 64 indices × 2 maps × (1 + 10 + 10) bytes is ~2.7 KB.
+    pub const MAX_INFLATED_BYTES: usize = 64 * 1024;
+}
+
+/// Why a statistics snapshot could not be decoded.
+#[derive(Debug, thiserror::Error)]
+pub enum StatisticsDecodeError {
+    #[error("end of stream")]
+    EndOfStream,
+    #[error("varint too long")]
+    VarintTooLong,
+    #[error("uvar32 overflow")]
+    Uvar32Overflow,
+    #[error("snapshot larger than {max} bytes")]
+    TooLarge { max: usize },
+    #[error("inflate failed: {0}")]
+    Inflate(#[from] std::io::Error),
 }
 
 struct SpanReader<'a> {
@@ -283,16 +305,15 @@ struct SpanReader<'a> {
 }
 
 impl SpanReader<'_> {
-    fn read_byte(&mut self) -> Result<u8, String> {
-        if self.pos >= self.span.len() {
-            return Err("end of stream".into());
-        }
-        let b = self.span[self.pos];
+    fn read_byte(&mut self) -> Result<u8, StatisticsDecodeError> {
+        let Some(&b) = self.span.get(self.pos) else {
+            return Err(StatisticsDecodeError::EndOfStream);
+        };
         self.pos += 1;
         Ok(b)
     }
 
-    fn read_uvar(&mut self) -> Result<u64, String> {
+    fn read_uvar(&mut self) -> Result<u64, StatisticsDecodeError> {
         let mut result = 0u64;
         let mut shift = 0;
         loop {
@@ -303,13 +324,13 @@ impl SpanReader<'_> {
             }
             shift += 7;
             if shift > 63 {
-                return Err("Varint too long".into());
+                return Err(StatisticsDecodeError::VarintTooLong);
             }
         }
     }
 
-    fn read_uvar32(&mut self) -> Result<u32, String> {
+    fn read_uvar32(&mut self) -> Result<u32, StatisticsDecodeError> {
         let v = self.read_uvar()?;
-        u32::try_from(v).map_err(|_| "uvar32 overflow".to_string())
+        u32::try_from(v).map_err(|_| StatisticsDecodeError::Uvar32Overflow)
     }
 }

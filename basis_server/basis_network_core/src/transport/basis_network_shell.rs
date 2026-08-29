@@ -3,8 +3,10 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use basis_error::{BasisError, BasisResult, ErrorCode};
 use parking_lot::{Mutex, RwLock};
 
+use crate::BNL;
 use crate::io::{NetDataReader, NetDataWriter, NetPacketReader};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -109,13 +111,37 @@ pub struct NetStatistics {
 }
 
 /// A pending inbound connection: what the client sent to connect, where from, and the two
-/// verdicts. Consumed by exactly one of `accept` / `reject`.
+/// verdicts. Decided by exactly one of `accept` / `reject`.
 pub trait ConnectionRequest: Send + Sync {
     /// The connect payload (protocol version, auth bytes, ready message).
     fn data(&self) -> NetDataReader;
     fn remote_end_point(&self) -> SocketAddr;
-    fn accept(&self) -> NetPeerRef;
-    fn reject(&self, w: &NetDataWriter);
+    /// Admits the connection and returns its peer. Accepting twice returns the same peer;
+    /// accepting after `reject` is a [`Conflict`](ErrorCode::Conflict) error.
+    fn accept(&self) -> BasisResult<NetPeerRef>;
+    /// Refuses the connection, sending `w` as the reject payload. Rejecting twice is harmless;
+    /// rejecting after `accept` is a [`Conflict`](ErrorCode::Conflict) error.
+    fn reject(&self, w: &NetDataWriter) -> BasisResult<()>;
+}
+
+/// Why a send was refused before it reached the wire. Every variant is a caller error — the
+/// C# transport threw `TooBigPacketException` / `ArgumentException` for the same cases — so
+/// none is worth retrying with the same arguments.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SendError {
+    #[error("payload of {size} bytes exceeds the {limit} byte limit for {method:?}; the transport cannot fragment it")]
+    TooBig { size: usize, limit: usize, method: DeliveryMethod },
+    #[error("channel {channel} is outside 0..{max}")]
+    BadChannel { channel: u8, max: u8 },
+    #[error("range {offset}..{} is outside a buffer of {len} byte(s)", offset.saturating_add(*length))]
+    BadRange { offset: usize, length: usize, len: usize },
+}
+
+impl From<SendError> for BasisError {
+    #[track_caller]
+    fn from(err: SendError) -> Self {
+        BasisError::wrap(basis_error::FaultKind::Permanent, ErrorCode::Transport, err)
+    }
 }
 
 /// One connected peer. `Arc<dyn NetPeer>` is the currency everything above the transport passes
@@ -124,13 +150,23 @@ pub trait NetPeer: Send + Sync {
     fn disconnect(&self);
     fn disconnect_with(&self, data: &[u8]);
     fn disconnect_force(&self);
-    fn send(&self, data: &[u8], channel_number: u8, delivery_method: DeliveryMethod);
-    fn send_writer(&self, data: &NetDataWriter, channel_number: u8, delivery_method: DeliveryMethod) {
-        self.send(data.as_read_only_span(), channel_number, delivery_method);
+    /// Queues `data` for delivery. A send to a peer that has already gone is silently dropped,
+    /// as LiteNetLib did; a payload the transport cannot carry is a [`SendError`].
+    fn send(&self, data: &[u8], channel_number: u8, delivery_method: DeliveryMethod) -> Result<(), SendError>;
+    fn send_writer(&self, data: &NetDataWriter, channel_number: u8, delivery_method: DeliveryMethod) -> Result<(), SendError> {
+        self.send(data.as_read_only_span(), channel_number, delivery_method)
     }
     /// Unreliable send of `data[offset..offset+length]`, optionally patching one byte first.
     /// LiteNetLib merged such sends into shared datagrams; QUIC coalesces datagram frames itself.
-    fn send_unreliable_raw_merge(&self, data: &[u8], offset: usize, length: usize, channel_number: u8, patch_offset: i32, patch_value: u8);
+    fn send_unreliable_raw_merge(
+        &self,
+        data: &[u8],
+        offset: usize,
+        length: usize,
+        channel_number: u8,
+        patch_offset: i32,
+        patch_value: u8,
+    ) -> Result<(), SendError>;
     fn get_packets_count_in_queue(&self, channel: u8, delivery_method: DeliveryMethod) -> i32;
     fn id(&self) -> i32;
     fn address(&self) -> IpAddr;
@@ -164,28 +200,32 @@ pub fn peers_equal(a: &NetPeerRef, b: &NetPeerRef) -> bool {
 
 /// The transport endpoint: binds, connects, hands out peers, and raises events on its listener.
 pub trait NetManager: Send + Sync {
-    fn start(&self, ipv4_address: IpAddr, ipv6_address: IpAddr, set_port: u16);
-    fn start_default(&self) {
-        self.start(IpAddr::from([0, 0, 0, 0]), IpAddr::from([0u16; 8]), 0);
+    /// Binds and starts accepting. A bind failure is returned, classified transient when the
+    /// port is merely still in use and permanent for a bad address or configuration.
+    fn start(&self, ipv4_address: IpAddr, ipv6_address: IpAddr, set_port: u16) -> BasisResult<()>;
+    fn start_default(&self) -> BasisResult<()> {
+        self.start(IpAddr::from([0, 0, 0, 0]), IpAddr::from([0u16; 8]), 0)
     }
-    fn start_port(&self, set_port: u16) {
-        self.start(IpAddr::from([0, 0, 0, 0]), IpAddr::from([0u16; 8]), set_port);
+    fn start_port(&self, set_port: u16) -> BasisResult<()> {
+        self.start(IpAddr::from([0, 0, 0, 0]), IpAddr::from([0u16; 8]), set_port)
     }
-    /// Manual mode is a LiteNetLib feature; a transport that lacks it panics, as the C# threw.
-    fn start_manual(&self, _ipv4: IpAddr, _ipv6: IpAddr, _set_port: u16) {
-        panic!("This transport does not support manual mode.");
+    /// Manual mode is a LiteNetLib feature; a transport that lacks it answers
+    /// [`Unsupported`](ErrorCode::Unsupported), where the C# threw `NotSupportedException`.
+    fn start_manual(&self, _ipv4: IpAddr, _ipv6: IpAddr, _set_port: u16) -> BasisResult<()> {
+        Err(BasisError::permanent(ErrorCode::Unsupported, "This transport does not support manual mode."))
     }
-    fn poll_events(&self) {
-        panic!("This transport does not support manual mode.");
+    fn poll_events(&self) -> BasisResult<()> {
+        Err(BasisError::permanent(ErrorCode::Unsupported, "This transport does not support manual mode."))
     }
-    fn manual_update(&self, _elapsed_milliseconds: f32) {
-        panic!("This transport does not support manual mode.");
+    fn manual_update(&self, _elapsed_milliseconds: f32) -> BasisResult<()> {
+        Err(BasisError::permanent(ErrorCode::Unsupported, "This transport does not support manual mode."))
     }
     fn stop(&self);
     /// Connects to `target` (an address:port for the LiteNetLib parser, an endpoint id / ticket
     /// for iroh) presenting `writer` as the connect payload. Returns the outgoing peer, whose
-    /// `PeerConnectedEvent`/`PeerDisconnectedEvent` reports the outcome.
-    fn connect(&self, target: &str, port: u16, writer: &NetDataWriter) -> Option<NetPeerRef>;
+    /// `PeerConnectedEvent`/`PeerDisconnectedEvent` reports the outcome. Fails at once for a
+    /// target that cannot be parsed or a transport that has not been started.
+    fn connect(&self, target: &str, port: u16, writer: &NetDataWriter) -> BasisResult<NetPeerRef>;
     fn send_unconnected_message(&self, writer: &NetDataWriter, remote_end_point: SocketAddr) -> bool;
     fn statistics(&self) -> NetStatistics;
     fn connected_peers_count(&self) -> i32;
@@ -264,6 +304,22 @@ pub struct EventBasedNetListener {
     pub network_receive_unconnected_event: NetEvent<OnNetworkReceiveUnconnected>,
 }
 
+/// Runs one handler, containing a panic in it. A handler that unwinds would otherwise take
+/// the transport task that raised the event down with it — the peer's reader would stop and
+/// the peer would hang — so the panic is logged as the bug it is and the transport carries on.
+fn invoke_handler(event: &'static str, handler: impl FnOnce()) {
+    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(handler)) {
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic payload".to_string());
+        BNL::log_error(format!(
+            "[Transport] a {event} handler panicked: {message}. The transport keeps running; this is a bug in the handler."
+        ));
+    }
+}
+
 impl EventBasedNetListener {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
@@ -271,37 +327,37 @@ impl EventBasedNetListener {
 
     pub fn raise_connection_request(&self, request: Arc<dyn ConnectionRequest>) {
         for h in self.connection_request_event.snapshot() {
-            h(request.clone());
+            invoke_handler("ConnectionRequest", || h(request.clone()));
         }
     }
 
     pub fn raise_peer_disconnected(&self, peer: NetPeerRef, disconnect_info: DisconnectInfo) {
         for h in self.peer_disconnected_event.snapshot() {
-            h(peer.clone(), disconnect_info.clone());
+            invoke_handler("PeerDisconnected", || h(peer.clone(), disconnect_info.clone()));
         }
     }
 
     pub fn raise_network_receive(&self, peer: NetPeerRef, reader: NetPacketReader, channel: u8, delivery_method: DeliveryMethod) {
         for h in self.network_receive_event.snapshot() {
-            h(peer.clone(), reader.clone(), channel, delivery_method);
+            invoke_handler("NetworkReceive", || h(peer.clone(), reader.clone(), channel, delivery_method));
         }
     }
 
     pub fn raise_peer_connected(&self, peer: NetPeerRef) {
         for h in self.peer_connected_event.snapshot() {
-            h(peer.clone());
+            invoke_handler("PeerConnected", || h(peer.clone()));
         }
     }
 
     pub fn raise_network_error(&self, end_point: SocketAddr, socket_error: i32) {
         for h in self.network_error_event.snapshot() {
-            h(end_point, socket_error);
+            invoke_handler("NetworkError", || h(end_point, socket_error));
         }
     }
 
     pub fn raise_network_receive_unconnected(&self, remote_end_point: SocketAddr, reader: NetPacketReader) {
         for h in self.network_receive_unconnected_event.snapshot() {
-            h(remote_end_point, reader.clone());
+            invoke_handler("NetworkReceiveUnconnected", || h(remote_end_point, reader.clone()));
         }
     }
 }

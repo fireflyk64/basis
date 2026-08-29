@@ -2,14 +2,22 @@
 // Copyright (c) 2020 Ruslan Pyrch
 // Port of LiteNetLib's NetDataWriter as vendored into BasisNetworkCore/Io/NetDataWriter.cs.
 
+use super::net_data_reader::{NetDataError, NetResult};
+
 /// Little-endian append-only buffer. `data()` is the whole backing store (what the C# `Data`
 /// property exposed) and `length()` how much of it has been written; `as_read_only_span()`
 /// is the written prefix, which is what every send takes.
+///
+/// The buffer always grows to fit: the C# writer's non-auto-resize mode threw
+/// `IndexOutOfRangeException` on overflow, and the server never used it. Scalar `put_*` calls
+/// therefore cannot fail. The length-prefixed puts return a [`NetResult`] instead of silently
+/// truncating a count to its `ushort` prefix the way the C# casts did.
+///
+/// Invariant: `position <= data.len()`.
 #[derive(Clone, Debug)]
 pub struct NetDataWriter {
     data: Vec<u8>,
     position: usize,
-    auto_resize: bool,
 }
 
 impl Default for NetDataWriter {
@@ -22,46 +30,32 @@ impl NetDataWriter {
     const INITIAL_SIZE: usize = 64;
 
     pub fn new() -> Self {
-        Self::with_capacity(true, Self::INITIAL_SIZE)
+        Self::with_capacity(Self::INITIAL_SIZE)
     }
 
-    pub fn with_auto_resize(auto_resize: bool) -> Self {
-        Self::with_capacity(auto_resize, Self::INITIAL_SIZE)
-    }
-
-    pub fn with_capacity(auto_resize: bool, initial_size: usize) -> Self {
-        Self {
-            data: vec![0; initial_size],
-            position: 0,
-            auto_resize,
-        }
+    pub fn with_capacity(initial_size: usize) -> Self {
+        Self { data: vec![0; initial_size], position: 0 }
     }
 
     /// Creates a writer over `bytes`. `copy` = false adopts the vector as-is, already "written".
     pub fn from_bytes(bytes: Vec<u8>, copy: bool) -> Self {
         if copy {
-            let mut w = Self::with_capacity(true, bytes.len());
-            w.put_bytes(&bytes);
-            return w;
+            return Self::from_slice(&bytes);
         }
         let position = bytes.len();
-        Self {
-            data: bytes,
-            position,
-            auto_resize: true,
-        }
+        Self { data: bytes, position }
     }
 
     pub fn from_slice(bytes: &[u8]) -> Self {
-        let mut w = Self::with_capacity(true, bytes.len());
+        let mut w = Self::with_capacity(bytes.len());
         w.put_bytes(bytes);
         w
     }
 
-    pub fn from_string(value: &str) -> Self {
+    pub fn from_string(value: &str) -> NetResult<Self> {
         let mut w = Self::new();
-        w.put_string(value);
-        w
+        w.put_string(value)?;
+        Ok(w)
     }
 
     pub fn capacity(&self) -> usize {
@@ -81,21 +75,18 @@ impl NetDataWriter {
     }
 
     pub fn as_read_only_span(&self) -> &[u8] {
-        &self.data[..self.position]
+        self.data.get(..self.position).unwrap_or(&self.data)
     }
 
     pub fn resize_if_need(&mut self, new_size: usize) {
         if self.data.len() < new_size {
-            let grown = new_size.max(self.data.len() * 2);
+            let grown = new_size.max(self.data.len().saturating_mul(2));
             self.data.resize(grown, 0);
         }
     }
 
     pub fn ensure_fit(&mut self, additional_size: usize) {
-        if self.data.len() < self.position + additional_size {
-            let grown = (self.position + additional_size).max(self.data.len() * 2);
-            self.data.resize(grown, 0);
-        }
+        self.resize_if_need(self.position.saturating_add(additional_size));
     }
 
     pub fn reset_with_size(&mut self, size: usize) {
@@ -108,30 +99,35 @@ impl NetDataWriter {
     }
 
     pub fn copy_data(&self) -> Vec<u8> {
-        self.data[..self.position].to_vec()
+        self.as_read_only_span().to_vec()
     }
 
-    /// Sets the position to rewrite previous values. Returns the previous position.
+    /// Sets the position to rewrite previous values, growing the buffer to keep it in range.
+    /// Returns the previous position.
     pub fn set_position(&mut self, position: usize) -> usize {
         let prev = self.position;
+        self.resize_if_need(position);
         self.position = position;
         prev
     }
 
+    /// Grows the buffer so `n` more bytes fit at the cursor and returns that window.
     #[inline]
-    fn reserve(&mut self, n: usize) {
-        if self.auto_resize {
-            self.resize_if_need(self.position + n);
-        } else if self.data.len() < self.position + n {
-            panic!("NetDataWriter overflow: {} + {n} > {}", self.position, self.data.len());
-        }
+    fn window(&mut self, n: usize) -> &mut [u8] {
+        let start = self.position;
+        let end = start.saturating_add(n);
+        self.resize_if_need(end);
+        self.position = end;
+        // `resize_if_need` guarantees `end <= data.len()`.
+        self.data.get_mut(start..end).unwrap_or(&mut [])
     }
 
     #[inline]
     fn write_raw(&mut self, bytes: &[u8]) {
-        self.reserve(bytes.len());
-        self.data[self.position..self.position + bytes.len()].copy_from_slice(bytes);
-        self.position += bytes.len();
+        let window = self.window(bytes.len());
+        if window.len() == bytes.len() {
+            window.copy_from_slice(bytes);
+        }
     }
 
     pub fn put_float(&mut self, value: f32) {
@@ -158,8 +154,11 @@ impl NetDataWriter {
         self.write_raw(&value.to_le_bytes());
     }
 
+    /// Writes the UTF-16 code unit of `value`; a character outside the BMP is written as U+FFFD
+    /// rather than truncated to its low half.
     pub fn put_char(&mut self, value: char) {
-        self.put_ushort(value as u32 as u16);
+        let unit = u16::try_from(u32::from(value)).unwrap_or(0xFFFD);
+        self.put_ushort(unit);
     }
 
     pub fn put_ushort(&mut self, value: u16) {
@@ -175,135 +174,160 @@ impl NetDataWriter {
     }
 
     pub fn put_byte(&mut self, value: u8) {
-        self.reserve(1);
-        self.data[self.position] = value;
-        self.position += 1;
+        self.write_raw(&[value]);
     }
 
     pub fn put_guid(&mut self, value: &[u8; 16]) {
         self.write_raw(value);
     }
 
-    pub fn put_bytes_range(&mut self, data: &[u8], offset: usize, length: usize) {
-        self.write_raw(&data[offset..offset + length]);
+    /// Writes `data[offset..offset + length]`.
+    pub fn put_bytes_range(&mut self, data: &[u8], offset: usize, length: usize) -> NetResult<()> {
+        let end = offset.checked_add(length);
+        match end.and_then(|end| data.get(offset..end)) {
+            Some(slice) => {
+                self.write_raw(slice);
+                Ok(())
+            }
+            None => Err(NetDataError::range_out_of_bounds(offset, length, data.len())),
+        }
     }
 
     pub fn put_bytes(&mut self, data: &[u8]) {
         self.write_raw(data);
     }
 
-    pub fn put_sbytes_with_length(&mut self, data: &[i8]) {
-        self.put_ushort(data.len() as u16);
-        self.reserve(data.len());
-        for &b in data {
-            self.data[self.position] = b as u8;
-            self.position += 1;
-        }
+    fn put_ushort_count(&mut self, what: &'static str, count: usize) -> NetResult<()> {
+        let count = u16::try_from(count).map_err(|_| NetDataError::too_long(what, count, usize::from(u16::MAX)))?;
+        self.put_ushort(count);
+        Ok(())
     }
 
-    pub fn put_bytes_with_length(&mut self, data: &[u8]) {
-        self.put_ushort(data.len() as u16);
+    pub fn put_sbytes_with_length(&mut self, data: &[i8]) -> NetResult<()> {
+        self.put_ushort_count("sbyte array", data.len())?;
+        let window = self.window(data.len());
+        for (dst, src) in window.iter_mut().zip(data) {
+            *dst = *src as u8;
+        }
+        Ok(())
+    }
+
+    pub fn put_bytes_with_length(&mut self, data: &[u8]) -> NetResult<()> {
+        self.put_ushort_count("byte array", data.len())?;
         self.write_raw(data);
+        Ok(())
     }
 
     pub fn put_bool(&mut self, value: bool) {
         self.put_byte(if value { 1 } else { 0 });
     }
 
-    fn put_array_le<T: Copy, const N: usize>(&mut self, arr: &[T], to_le: impl Fn(T) -> [u8; N]) {
-        self.put_ushort(arr.len() as u16);
-        self.reserve(arr.len() * N);
-        for &v in arr {
-            let b = to_le(v);
-            self.data[self.position..self.position + N].copy_from_slice(&b);
-            self.position += N;
+    fn put_array_le<T: Copy, const N: usize>(
+        &mut self,
+        what: &'static str,
+        arr: &[T],
+        to_le: impl Fn(T) -> [u8; N],
+    ) -> NetResult<()> {
+        self.put_ushort_count(what, arr.len())?;
+        let window = self.window(arr.len().saturating_mul(N));
+        for (dst, src) in window.as_chunks_mut::<N>().0.iter_mut().zip(arr) {
+            dst.copy_from_slice(&to_le(*src));
         }
+        Ok(())
     }
 
-    pub fn put_array_float(&mut self, value: &[f32]) {
-        self.put_array_le(value, f32::to_le_bytes);
+    pub fn put_array_float(&mut self, value: &[f32]) -> NetResult<()> {
+        self.put_array_le("float array", value, f32::to_le_bytes)
     }
 
-    pub fn put_array_double(&mut self, value: &[f64]) {
-        self.put_array_le(value, f64::to_le_bytes);
+    pub fn put_array_double(&mut self, value: &[f64]) -> NetResult<()> {
+        self.put_array_le("double array", value, f64::to_le_bytes)
     }
 
-    pub fn put_array_long(&mut self, value: &[i64]) {
-        self.put_array_le(value, i64::to_le_bytes);
+    pub fn put_array_long(&mut self, value: &[i64]) -> NetResult<()> {
+        self.put_array_le("long array", value, i64::to_le_bytes)
     }
 
-    pub fn put_array_ulong(&mut self, value: &[u64]) {
-        self.put_array_le(value, u64::to_le_bytes);
+    pub fn put_array_ulong(&mut self, value: &[u64]) -> NetResult<()> {
+        self.put_array_le("ulong array", value, u64::to_le_bytes)
     }
 
-    pub fn put_array_int(&mut self, value: &[i32]) {
-        self.put_array_le(value, i32::to_le_bytes);
+    pub fn put_array_int(&mut self, value: &[i32]) -> NetResult<()> {
+        self.put_array_le("int array", value, i32::to_le_bytes)
     }
 
-    pub fn put_array_uint(&mut self, value: &[u32]) {
-        self.put_array_le(value, u32::to_le_bytes);
+    pub fn put_array_uint(&mut self, value: &[u32]) -> NetResult<()> {
+        self.put_array_le("uint array", value, u32::to_le_bytes)
     }
 
-    pub fn put_array_ushort(&mut self, value: &[u16]) {
-        self.put_array_le(value, u16::to_le_bytes);
+    pub fn put_array_ushort(&mut self, value: &[u16]) -> NetResult<()> {
+        self.put_array_le("ushort array", value, u16::to_le_bytes)
     }
 
-    pub fn put_array_short(&mut self, value: &[i16]) {
-        self.put_array_le(value, i16::to_le_bytes);
+    pub fn put_array_short(&mut self, value: &[i16]) -> NetResult<()> {
+        self.put_array_le("short array", value, i16::to_le_bytes)
     }
 
-    pub fn put_array_bool(&mut self, value: &[bool]) {
-        self.put_array_le(value, |b| [if b { 1u8 } else { 0u8 }]);
+    pub fn put_array_bool(&mut self, value: &[bool]) -> NetResult<()> {
+        self.put_array_le("bool array", value, |b| [if b { 1u8 } else { 0u8 }])
     }
 
-    pub fn put_array_string(&mut self, value: &[String]) {
-        self.put_ushort(value.len() as u16);
+    pub fn put_array_string(&mut self, value: &[String]) -> NetResult<()> {
+        self.put_ushort_count("string array", value.len())?;
         for s in value {
-            self.put_string(s);
+            self.put_string(s)?;
         }
+        Ok(())
     }
 
-    pub fn put_array_string_max(&mut self, value: &[String], str_max_length: usize) {
-        self.put_ushort(value.len() as u16);
+    pub fn put_array_string_max(&mut self, value: &[String], str_max_length: usize) -> NetResult<()> {
+        self.put_ushort_count("string array", value.len())?;
         for s in value {
-            self.put_string_max(s, str_max_length);
+            self.put_string_max(s, str_max_length)?;
         }
+        Ok(())
     }
 
-    pub fn put_large_string(&mut self, value: &str) {
+    pub fn put_large_string(&mut self, value: &str) -> NetResult<()> {
         if value.is_empty() {
             self.put_int(0);
-            return;
+            return Ok(());
         }
         let bytes = value.as_bytes();
-        self.put_int(bytes.len() as i32);
+        let length =
+            i32::try_from(bytes.len()).map_err(|_| NetDataError::too_long("large string", bytes.len(), i32::MAX as usize))?;
+        self.put_int(length);
         self.write_raw(bytes);
+        Ok(())
     }
 
-    pub fn put_string(&mut self, value: &str) {
-        self.put_string_max(value, 0);
+    pub fn put_string(&mut self, value: &str) -> NetResult<()> {
+        self.put_string_max(value, 0)
     }
 
-    /// Note that `max_length` only limits the number of characters in a string, not its size in bytes.
-    pub fn put_string_max(&mut self, value: &str, max_length: usize) {
+    /// Note that `max_length` only limits the number of characters in a string, not its size
+    /// in bytes. A longer string is truncated to `max_length` characters, as the C# did.
+    pub fn put_string_max(&mut self, value: &str, max_length: usize) -> NetResult<()> {
         if value.is_empty() {
             self.put_ushort(0);
-            return;
+            return Ok(());
         }
         let truncated: &str = if max_length > 0 && value.chars().count() > max_length {
             let end = value.char_indices().nth(max_length).map(|(i, _)| i).unwrap_or(value.len());
-            &value[..end]
+            value.get(..end).unwrap_or(value)
         } else {
             value
         };
         let bytes = truncated.as_bytes();
         if bytes.is_empty() {
             self.put_ushort(0);
-            return;
+            return Ok(());
         }
         let size = bytes.len() + 1;
-        assert!(size <= usize::from(u16::MAX), "string too long for the ushort length prefix");
-        self.put_ushort(size as u16);
+        let prefix =
+            u16::try_from(size).map_err(|_| NetDataError::too_long("string", bytes.len(), usize::from(u16::MAX) - 1))?;
+        self.put_ushort(prefix);
         self.write_raw(bytes);
+        Ok(())
     }
 }

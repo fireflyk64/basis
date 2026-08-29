@@ -2,6 +2,7 @@ use crate::io::{NetDataReader, NetDataWriter, NetResult};
 use crate::BNL;
 
 use super::identity::PlayerIdMessage;
+use crate::io::net_data_reader::NetDataError;
 
 /// Client-to-server chat message. Contains UTF-8 encoded text.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -46,16 +47,17 @@ impl ChatMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         if self.payload.is_empty() {
             writer.put_ushort(0);
             writer.put_bool(self.play_notification_sound);
-            return;
+            return Ok(());
         }
         self.payload_size = self.payload.len().min(Self::MAX_PAYLOAD_BYTES) as u16;
         writer.put_ushort(self.payload_size);
-        writer.put_bytes_range(&self.payload, 0, usize::from(self.payload_size));
+        writer.put_bytes_range(&self.payload, 0, usize::from(self.payload_size))?;
         writer.put_bool(self.play_notification_sound);
+        Ok(())
     }
 }
 
@@ -87,13 +89,18 @@ impl ConsoleData {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_byte(self.message_index);
-        let size = self.array.as_ref().map(|a| a.len() as u16).unwrap_or(0);
-        writer.put_ushort(size);
-        if size > 0 {
-            writer.put_bytes(self.array.as_ref().unwrap());
+        match self.array.as_ref() {
+            Some(array) if !array.is_empty() => {
+                let size = u16::try_from(array.len())
+                    .map_err(|_| NetDataError::too_long("chat payload", array.len(), usize::from(u16::MAX)))?;
+                writer.put_ushort(size);
+                writer.put_bytes(array);
+            }
+            _ => writer.put_ushort(0),
         }
+        Ok(())
     }
 }
 
@@ -110,8 +117,9 @@ impl ServerChatMessage {
         self.chat_message.deserialize(reader)
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.player_id_message.serialize(writer);
-        self.chat_message.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.player_id_message.serialize(writer)?;
+        self.chat_message.serialize(writer)?;
+        Ok(())
     }
 }

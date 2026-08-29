@@ -3,6 +3,7 @@ use crate::io::{NetDataError, NetDataReader, NetDataWriter, NetResult};
 use crate::BNL;
 
 use super::identity::PlayerIdMessage;
+use crate::io::net_data_reader::NetResultExt;
 
 /// Wire form: [PayloadSize:1][messageIndex:1][data:PayloadSize]. The 2-byte header is written
 /// for EVERY entry, including empty/suppressed ones (PayloadSize 0).
@@ -40,16 +41,13 @@ impl AdditionalAvatarData {
         let size = usize::from(payload_size);
         let array = match self.array.as_mut() {
             Some(a) if a.len() == size => a,
-            _ => {
-                self.array = Some(vec![0u8; size]);
-                self.array.as_mut().unwrap()
-            }
+            _ => self.array.insert(vec![0u8; size]),
         };
         reader.get_bytes(array, size)?;
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         if let Some(array) = &self.array
             && array.len() > 255
         {
@@ -57,14 +55,22 @@ impl AdditionalAvatarData {
             self.payload_size = 0;
             writer.put_byte(self.payload_size);
             writer.put_byte(self.message_index);
-            return;
+            return Ok(());
         }
-        self.payload_size = self.array.as_ref().map(|a| a.len() as u8).unwrap_or(0);
-        writer.put_byte(self.payload_size);
-        writer.put_byte(self.message_index);
-        if self.payload_size > 0 {
-            writer.put_bytes_range(self.array.as_ref().unwrap(), 0, usize::from(self.payload_size));
+        match self.array.as_ref() {
+            Some(array) if !array.is_empty() => {
+                self.payload_size = u8::try_from(array.len()).unwrap_or(u8::MAX);
+                writer.put_byte(self.payload_size);
+                writer.put_byte(self.message_index);
+                writer.put_bytes_range(array, 0, usize::from(self.payload_size))?;
+            }
+            _ => {
+                self.payload_size = 0;
+                writer.put_byte(0);
+                writer.put_byte(self.message_index);
+            }
         }
+        Ok(())
     }
 }
 
@@ -82,24 +88,18 @@ pub struct AvatarDataMessage {
 impl AvatarDataMessage {
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
         self.player_id_message.deserialize(reader)?;
-        self.avatar_link_index = reader
-            .try_get_byte()
-            .ok_or_else(|| NetDataError("Failed to read AvatarLinkIndex.".into()))?;
-        self.message_index = reader
-            .try_get_byte()
-            .ok_or_else(|| NetDataError("Failed to read messageIndex.".into()))?;
+        self.avatar_link_index = reader.get_byte().field("AvatarLinkIndex")?;
+        self.message_index = reader.get_byte().field("messageIndex")?;
         match reader.try_get_ushort() {
             Some(recipients_size) => {
                 self.recipients_size = recipients_size;
                 if usize::from(recipients_size) > reader.available_bytes() / 2 {
-                    return Err(NetDataError(format!("Invalid recipientsSize: {recipients_size}")));
+                    return Err(NetDataError::invalid("recipientsSize", format!("{recipients_size}")));
                 }
                 let mut recipients = Vec::with_capacity(usize::from(recipients_size));
-                for index in 0..recipients_size {
+                for _ in 0..recipients_size {
                     recipients.push(
-                        reader
-                            .try_get_ushort()
-                            .ok_or_else(|| NetDataError(format!("Failed to read recipient at index {index}.")))?,
+                        reader.get_ushort().field("recipients")?,
                     );
                 }
                 self.recipients = Some(recipients);
@@ -115,8 +115,8 @@ impl AvatarDataMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.player_id_message.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.player_id_message.serialize(writer)?;
         writer.put_byte(self.avatar_link_index);
         writer.put_byte(self.message_index);
         self.recipients_size = self.recipients.as_ref().map(|r| r.len() as u16).unwrap_or(0);
@@ -131,6 +131,7 @@ impl AvatarDataMessage {
         {
             writer.put_bytes(payload);
         }
+        Ok(())
     }
 }
 
@@ -144,21 +145,21 @@ pub struct AvatarLoadDataMessage {
 
 impl AvatarLoadDataMessage {
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
-        self.message_index = reader.try_get_byte().ok_or_else(|| NetDataError("Failed to read messageIndex.".into()))?;
-        self.who_sent_us_this = reader.try_get_ushort().ok_or_else(|| NetDataError("Failed to read who sent us this!".into()))?;
-        self.payload_size = reader.try_get_ushort().ok_or_else(|| NetDataError("Failed to read payloadSize.".into()))?;
+        self.message_index = reader.get_byte().field("messageIndex")?;
+        self.who_sent_us_this = reader.get_ushort().field("who sent us this")?;
+        self.payload_size = reader.get_ushort().field("payloadSize")?;
         if self.payload_size == 0 {
             self.payload = None;
             return Ok(());
         }
         if usize::from(self.payload_size) > reader.available_bytes() {
-            return Err(NetDataError(format!("Invalid payloadSize: {}", self.payload_size)));
+            return Err(NetDataError::invalid("payloadSize", format!("{}", self.payload_size)));
         }
         self.payload = Some(reader.get_bytes_vec(usize::from(self.payload_size))?);
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_byte(self.message_index);
         writer.put_ushort(self.who_sent_us_this);
         self.payload_size = self.payload.as_ref().map(|p| p.len() as u16).unwrap_or(0);
@@ -168,6 +169,7 @@ impl AvatarLoadDataMessage {
         {
             writer.put_bytes(payload);
         }
+        Ok(())
     }
 }
 
@@ -181,8 +183,9 @@ impl BasisAvatarCloneRequest {
         self.requesting_user = reader.get_ushort()?;
         Ok(())
     }
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.requesting_user);
+        Ok(())
     }
 }
 
@@ -196,8 +199,9 @@ impl BasisAvatarCloneResponse {
         self.requesting_user = reader.get_ushort()?;
         Ok(())
     }
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.requesting_user);
+        Ok(())
     }
 }
 
@@ -254,7 +258,7 @@ impl ClientAvatarChangeMessage {
         } else {
             if length > reader.available_bytes() {
                 self.byte_array = None;
-                return Err(NetDataError(format!(
+                return Err(NetDataError::invalid("value", format!(
                     "Avatar change length {length} exceeds available data ({} bytes).",
                     reader.available_bytes()
                 )));
@@ -268,7 +272,7 @@ impl ClientAvatarChangeMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_byte(self.load_mode);
         match &self.byte_array {
             None => writer.put_ushort(0),
@@ -281,6 +285,7 @@ impl ClientAvatarChangeMessage {
         writer.put_ushort(Self::compress_fit_scale(self.arm_scale));
         writer.put_ushort(Self::compress_fit_scale(self.leg_scale));
         writer.put_ushort(Self::compress_fit_scale(self.torso_scale));
+        Ok(())
     }
 }
 
@@ -300,10 +305,11 @@ impl ClientBodyFitMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(ClientAvatarChangeMessage::compress_fit_scale(self.arm_scale));
         writer.put_ushort(ClientAvatarChangeMessage::compress_fit_scale(self.leg_scale));
         writer.put_ushort(ClientAvatarChangeMessage::compress_fit_scale(self.torso_scale));
+        Ok(())
     }
 }
 
@@ -320,9 +326,10 @@ impl ServerBodyFitMessage {
         self.body_fit.deserialize(reader)
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.ushort_player_id.serialize(writer);
-        self.body_fit.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.ushort_player_id.serialize(writer)?;
+        self.body_fit.serialize(writer)?;
+        Ok(())
     }
 }
 
@@ -386,10 +393,7 @@ impl LocalAvatarSyncMessage {
     fn read_array(&mut self, reader: &mut NetDataReader, expected: usize) -> NetResult<()> {
         let array = match self.array.as_mut() {
             Some(a) if a.len() == expected => a,
-            _ => {
-                self.array = Some(vec![0u8; expected]);
-                self.array.as_mut().unwrap()
-            }
+            _ => self.array.insert(vec![0u8; expected]),
         };
         reader.get_bytes(array, expected)
     }
@@ -433,13 +437,10 @@ impl LocalAvatarSyncMessage {
         };
         self.linked_avatar_index = linked;
         let size = usize::from(self.additional_avatar_data_size);
-        let datas = match self.additional_avatar_datas.as_mut() {
-            Some(d) if d.len() == size => d,
-            _ => {
-                self.additional_avatar_datas = Some(vec![AdditionalAvatarData::default(); size]);
-                self.additional_avatar_datas.as_mut().unwrap()
-            }
-        };
+        if !self.additional_avatar_datas.as_ref().is_some_and(|d| d.len() == size) {
+            self.additional_avatar_datas = Some(vec![AdditionalAvatarData::default(); size]);
+        }
+        let datas = self.additional_avatar_datas.get_or_insert_with(Vec::new);
         for entry in datas.iter_mut() {
             // Deserialize in place: the slot's retained payload buffer is reused when the size matches.
             entry.deserialize(reader)?;
@@ -449,74 +450,81 @@ impl LocalAvatarSyncMessage {
 
     /// Serialize with DataQualityLevel in the payload (initial player creation, non-quality
     /// channels). `quality` of `None` is the C# cast of an invalid level.
-    pub fn serialize(&mut self, writer: &mut NetDataWriter, quality: Option<BitQuality>) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter, quality: Option<BitQuality>) -> NetResult<()> {
         self.data_quality_level = quality.map(|q| q as u8).unwrap_or(self.data_quality_level);
         let Some(expected) = Self::try_get_expected_payload_length(self.data_quality_level) else {
             BNL::log_error(format!("Serialize invalid quality={:?} (DataQualityLevel={})", quality, self.data_quality_level));
             writer.put_byte(self.data_quality_level);
             writer.put_byte(0);
-            return;
+            return Ok(());
         };
         writer.put_byte(self.data_quality_level);
         let Some(array) = self.array.as_mut() else {
             BNL::log_error("array was null!!");
             writer.put_byte(0);
-            return;
+            return Ok(());
         };
         if array.len() != expected {
             *array = vec![0u8; expected];
         }
-        writer.put_bytes_range(array, 0, expected);
+        writer.put_bytes_range(array, 0, expected)?;
 
         let count = self.additional_avatar_datas.as_ref().map(|d| d.len()).unwrap_or(0);
         if count == 0 || count > 255 {
             writer.put_byte(0);
-            return;
+            return Ok(());
         }
         self.additional_avatar_data_size = count as u8;
         writer.put_byte(self.additional_avatar_data_size);
         writer.put_byte(self.linked_avatar_index);
-        for entry in self.additional_avatar_datas.as_mut().unwrap().iter_mut() {
-            entry.serialize(writer);
+        if let Some(entries) = self.additional_avatar_datas.as_mut() {
+            for entry in entries.iter_mut() {
+                entry.serialize(writer)?;
+            }
         }
+        Ok(())
     }
 
     /// Serialize for the channel-based path (quality channels). Quality and additional-data
     /// presence are encoded in the channel — not written to the payload.
-    pub fn serialize_for_channel(&mut self, writer: &mut NetDataWriter, quality: BitQuality) {
+    pub fn serialize_for_channel(&mut self, writer: &mut NetDataWriter, quality: BitQuality) -> NetResult<()> {
         self.data_quality_level = quality as u8;
         let Some(expected) = Self::try_get_expected_payload_length(self.data_quality_level) else {
             BNL::log_error(format!("SerializeForChannel invalid quality={quality:?}"));
-            return;
+            return Ok(());
         };
         let Some(array) = self.array.as_mut() else {
             BNL::log_error("array was null!!");
-            return;
+            return Ok(());
         };
         if array.len() != expected {
             *array = vec![0u8; expected];
         }
-        writer.put_bytes_range(array, 0, expected);
+        writer.put_bytes_range(array, 0, expected)?;
 
         // Additional data only written when present — the channel tells the receiver.
         let count = self.additional_avatar_datas.as_ref().map(|d| d.len()).unwrap_or(0);
         if count > 0 && count <= 255 {
-            self.serialize_additional_only(writer);
+            self.serialize_additional_only(writer)?;
         }
+        Ok(())
     }
 
     /// Writes just the additional-data section [size:1][linkedIndex:1][entries...].
-    pub fn serialize_additional_only(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize_additional_only(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         let count = self.additional_avatar_datas.as_ref().map(|d| d.len()).unwrap_or(0);
         if count == 0 || count > 255 {
-            return;
+            return Ok(());
         }
         self.additional_avatar_data_size = count as u8;
         writer.put_byte(self.additional_avatar_data_size);
         writer.put_byte(self.linked_avatar_index);
-        for entry in self.additional_avatar_datas.as_mut().unwrap().iter_mut() {
-            entry.serialize(writer);
+        if let Some(entries) = self.additional_avatar_datas.as_mut() {
+            for entry in entries.iter_mut() {
+                entry.serialize(writer)?;
+            }
         }
+        Ok(())
     }
 }
 
@@ -531,8 +539,8 @@ pub struct RemoteAvatarDataMessage {
 impl RemoteAvatarDataMessage {
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
         self.player_id_message.deserialize(reader)?;
-        self.avatar_link_index = reader.try_get_byte().ok_or_else(|| NetDataError("Failed to read AvatarLinkIndex.".into()))?;
-        self.message_index = reader.try_get_byte().ok_or_else(|| NetDataError("Failed to read messageIndex.".into()))?;
+        self.avatar_link_index = reader.get_byte().field("AvatarLinkIndex")?;
+        self.message_index = reader.get_byte().field("messageIndex")?;
         if reader.available_bytes() != 0 {
             self.payload = Some(reader.get_remaining_bytes());
         } else {
@@ -541,8 +549,8 @@ impl RemoteAvatarDataMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.player_id_message.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.player_id_message.serialize(writer)?;
         writer.put_byte(self.avatar_link_index);
         writer.put_byte(self.message_index);
         if let Some(payload) = &self.payload
@@ -550,6 +558,7 @@ impl RemoteAvatarDataMessage {
         {
             writer.put_bytes(payload);
         }
+        Ok(())
     }
 }
 
@@ -565,9 +574,10 @@ impl ServerAvatarChangeMessage {
         self.client_avatar_change_message.deserialize(reader)
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.ushort_player_id.serialize(writer);
-        self.client_avatar_change_message.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.ushort_player_id.serialize(writer)?;
+        self.client_avatar_change_message.serialize(writer)?;
+        Ok(())
     }
 }
 
@@ -583,9 +593,10 @@ impl ServerAvatarDataMessage {
         self.avatar_data_message.deserialize(reader)
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.player_id_message.serialize(writer);
-        self.avatar_data_message.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.player_id_message.serialize(writer)?;
+        self.avatar_data_message.serialize(writer)?;
+        Ok(())
     }
 }
 
@@ -621,11 +632,12 @@ impl ServerSideSyncPlayerMessage {
         self.avatar_serialization.deserialize_for_channel(reader, channel_derived_quality, has_additional_data)
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.player_id_message.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.player_id_message.serialize(writer)?;
         writer.put_byte(self.interval);
         writer.put_byte(self.sequence);
         let quality = BitQuality::from_byte(self.avatar_serialization.data_quality_level);
-        self.avatar_serialization.serialize(writer, quality);
+        self.avatar_serialization.serialize(writer, quality)?;
+        Ok(())
     }
 }

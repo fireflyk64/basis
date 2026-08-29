@@ -42,13 +42,13 @@ impl LNLConnectionTargetParser {
             if let Some(close_bracket) = left.find(']').filter(|i| *i > 0) {
                 out.address = left[1..close_bracket].trim().to_string();
                 let after_bracket = &left[close_bracket + 1..];
-                if after_bracket.len() > 1 && after_bracket.starts_with(':') {
-                    if let Ok(parsed_port) = after_bracket[1..].parse::<u16>()
-                        && parsed_port > 0
-                    {
-                        out.port = parsed_port;
-                        out.port_provided = true;
-                    }
+                if after_bracket.len() > 1
+                    && after_bracket.starts_with(':')
+                    && let Ok(parsed_port) = after_bracket[1..].parse::<u16>()
+                    && parsed_port > 0
+                {
+                    out.port = parsed_port;
+                    out.port_provided = true;
                 }
             } else {
                 out.address = left.trim().to_string(); // malformed bracket — treat whole string as address

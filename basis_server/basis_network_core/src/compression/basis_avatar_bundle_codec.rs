@@ -21,8 +21,8 @@ impl BasisAvatarBundleCodec {
         let mut read = 0usize;
 
         while read + 2 <= grouped.len() {
-            let channel = grouped[read];
-            let n = usize::from(grouped[read + 1]);
+            let channel = *grouped.get(read)?;
+            let n = usize::from(*grouped.get(read + 1)?);
             read += 2;
             if n == 0 || read + n * 2 > grouped.len() {
                 return None;
@@ -32,7 +32,7 @@ impl BasisAvatarBundleCodec {
             }
             let mut body_total = 0usize;
             for i in 0..n {
-                let len = usize::from(u16::from_le_bytes([grouped[read + i * 2], grouped[read + i * 2 + 1]]));
+                let len = usize::from(u16::from_le_bytes([*grouped.get(read + i * 2)?, *grouped.get(read + i * 2 + 1)?]));
                 if len == 0 {
                     return None;
                 }
@@ -58,8 +58,8 @@ impl BasisAvatarBundleCodec {
         let mut write = 0usize;
 
         while read + 2 <= grouped.len() {
-            let channel = grouped[read];
-            let n = usize::from(grouped[read + 1]);
+            let channel = *grouped.get(read)?;
+            let n = usize::from(*grouped.get(read + 1)?);
             read += 2;
             if n == 0 || read + n * 2 > grouped.len() {
                 return None;
@@ -67,7 +67,12 @@ impl BasisAvatarBundleCodec {
 
             let lengths_at = read;
             read += n * 2;
-            let len_of = |i: usize| usize::from(u16::from_le_bytes([grouped[lengths_at + i * 2], grouped[lengths_at + i * 2 + 1]]));
+            // Every length is inside the buffer by the check above; a miss reads as zero.
+            let len_of = |i: usize| {
+                let lo = grouped.get(lengths_at + i * 2).copied().unwrap_or(0);
+                let hi = grouped.get(lengths_at + i * 2 + 1).copied().unwrap_or(0);
+                usize::from(u16::from_le_bytes([lo, hi]))
+            };
 
             let mut body_total = 0usize;
             let mut max_len = 0usize;
@@ -91,8 +96,8 @@ impl BasisAvatarBundleCodec {
             let frame_at = write;
             for i in 0..n {
                 let len = len_of(i);
-                flat[write] = channel;
-                flat[write + 1..write + 3].copy_from_slice(&(len as u16).to_le_bytes());
+                *flat.get_mut(write)? = channel;
+                flat.get_mut(write + 1..write + 3)?.copy_from_slice(&(len as u16).to_le_bytes());
                 write += 3 + len;
             }
 
@@ -102,7 +107,7 @@ impl BasisAvatarBundleCodec {
                 let mut at = frame_at;
                 for i in 0..n {
                     let len = len_of(i);
-                    flat[at + 3..at + 3 + len].copy_from_slice(&grouped[src..src + len]);
+                    flat.get_mut(at + 3..at + 3 + len)?.copy_from_slice(grouped.get(src..src + len)?);
                     src += len;
                     at += 3 + len;
                 }
@@ -114,7 +119,7 @@ impl BasisAvatarBundleCodec {
                     for i in 0..n {
                         let len = len_of(i);
                         if j < len {
-                            flat[at + 3 + j] = grouped[src];
+                            *flat.get_mut(at + 3 + j)? = *grouped.get(src)?;
                             src += 1;
                         }
                         at += 3 + len;

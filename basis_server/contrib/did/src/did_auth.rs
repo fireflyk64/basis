@@ -164,7 +164,7 @@ impl DidAuthentication {
         key_id: &DidUrlFragment,
     ) -> Result<&'a JsonWebKey, DidFragmentErr> {
         if document.pubkeys.len() == 1 {
-            return Ok(document.pubkeys.values().next().expect("one key"));
+            return document.pubkeys.values().next().ok_or(DidFragmentErr::NoSuchFragment);
         }
         document
             .pubkeys

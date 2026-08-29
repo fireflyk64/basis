@@ -3,15 +3,27 @@
 //! BouncyCastle is replaced by the RustCrypto/dalek crates. The wrapper types keep their C#
 //! names (`Payload`, `Signature`, `PubKey`, `PrivKey`, `SharedSecretKey`) so code that passed a
 //! `PubKey` around in C# passes a `PubKey` around here.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unimplemented,
+        clippy::todo,
+        clippy::unreachable
+    )
+)]
+#![deny(unused_must_use)]
 
 pub mod basis_aead_cipher;
 pub mod basis_hkdf;
 pub mod basis_x25519;
 pub mod ed25519;
 
-pub use basis_aead_cipher::BasisAeadCipher;
-pub use basis_hkdf::BasisHkdf;
-pub use basis_x25519::BasisX25519;
+pub use basis_aead_cipher::{AeadError, BasisAeadCipher};
+pub use basis_hkdf::{BasisHkdf, HkdfLengthError};
+pub use basis_x25519::{BasisX25519, X25519Error};
 pub use ed25519::Ed25519;
 
 macro_rules! byte_newtype {

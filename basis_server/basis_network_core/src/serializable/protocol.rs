@@ -30,13 +30,14 @@ impl BytesMessage {
         reader.get_bytes_vec(msg_length).ok()
     }
 
-    pub fn serialize(&self, writer: &mut NetDataWriter, data: &[u8]) {
+    pub fn serialize(&self, writer: &mut NetDataWriter, data: &[u8]) -> NetResult<()> {
         let length = data.len() as u16;
         if length == 0 {
             BNL::log_error("this data does not belong on the network! was size 0");
         }
         writer.put_ushort(length);
         writer.put_bytes(data);
+        Ok(())
     }
 }
 
@@ -55,8 +56,9 @@ impl ErrorMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        writer.put_string(&self.message);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        writer.put_string(&self.message)?;
+        Ok(())
     }
 }
 
@@ -74,11 +76,12 @@ impl ReadyMessage {
         self.local_avatar_sync_message.deserialize(reader)
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.player_meta_data_message.serialize(writer);
-        self.client_avatar_change_message.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.player_meta_data_message.serialize(writer)?;
+        self.client_avatar_change_message.serialize(writer)?;
         let quality = BitQuality::from_byte(self.local_avatar_sync_message.data_quality_level);
-        self.local_avatar_sync_message.serialize(writer, quality);
+        self.local_avatar_sync_message.serialize(writer, quality)?;
+        Ok(())
     }
 
     pub fn was_deserialized_correctly(&self) -> bool {
@@ -106,14 +109,17 @@ impl ServerReadyBatchMessage {
     /// Below this a Deflate block header costs more than it saves.
     pub const MIN_COMPRESS_BYTES: usize = 256;
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         let body = &self.payload;
         let mut framed: &[u8] = body;
         let mut compressed = false;
         let deflated;
-        if body.len() >= Self::MIN_COMPRESS_BYTES {
-            deflated = Self::deflate(body);
+        if body.len() >= Self::MIN_COMPRESS_BYTES
+            && let Ok(d) = Self::deflate(body)
+        {
             // Only pay for compression when it actually wins; a high-entropy batch can grow.
+            // A deflate failure (never seen for an in-memory sink) just sends the batch raw.
+            deflated = d;
             if deflated.len() < body.len() {
                 framed = &deflated;
                 compressed = true;
@@ -122,8 +128,11 @@ impl ServerReadyBatchMessage {
         self.was_compressed = compressed;
         writer.put_ushort(self.count);
         writer.put_bool(compressed);
-        writer.put_int(framed.len() as i32);
+        let length = i32::try_from(framed.len())
+            .map_err(|_| NetDataError::too_long("ready batch", framed.len(), i32::MAX as usize))?;
+        writer.put_int(length);
         writer.put_bytes(framed);
+        Ok(())
     }
 
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
@@ -131,24 +140,24 @@ impl ServerReadyBatchMessage {
         self.was_compressed = reader.get_bool()?;
         let length = reader.get_int()?;
         if length < 0 || length as usize > reader.available_bytes() {
-            return Err(NetDataError(format!(
-                "Ready batch length {length} exceeds available data ({} bytes).",
+            return Err(NetDataError::invalid("ReadyBatch", format!(
+                "length {length} exceeds available data ({} bytes).",
                 reader.available_bytes()
             )));
         }
         let framed = reader.get_bytes_vec(length as usize)?;
         self.payload = if self.was_compressed {
-            Self::inflate(&framed).map_err(|e| NetDataError(format!("Ready batch inflate failed: {e}")))?
+            Self::inflate(&framed).map_err(|e| NetDataError::invalid("ReadyBatch", format!("inflate failed: {e}")))?
         } else {
             framed
         };
         Ok(())
     }
 
-    pub fn deflate(raw: &[u8]) -> Vec<u8> {
+    pub fn deflate(raw: &[u8]) -> std::io::Result<Vec<u8>> {
         let mut e = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
-        e.write_all(raw).expect("in-memory write");
-        e.finish().expect("in-memory finish")
+        e.write_all(raw)?;
+        e.finish()
     }
 
     pub fn inflate(compressed: &[u8]) -> std::io::Result<Vec<u8>> {
@@ -172,9 +181,10 @@ impl ServerReadyMessage {
         self.local_ready_message.deserialize(reader)
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.player_id_message.serialize(writer);
-        self.local_ready_message.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.player_id_message.serialize(writer)?;
+        self.local_ready_message.serialize(writer)?;
+        Ok(())
     }
 }
 
@@ -220,9 +230,9 @@ impl BasisP2PSignalMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.other_player_id);
-        writer.put_string_max(&self.session_token, Self::MAX_TOKEN_LENGTH);
+        writer.put_string_max(&self.session_token, Self::MAX_TOKEN_LENGTH)?;
         match &self.ephemeral_public_key {
             Some(key) if key.len() == Self::PUBLIC_KEY_SIZE => {
                 writer.put_byte(1);
@@ -230,6 +240,7 @@ impl BasisP2PSignalMessage {
             }
             _ => writer.put_byte(0),
         }
+        Ok(())
     }
 }
 
@@ -252,9 +263,10 @@ impl BasisP2PIntroduceRequest {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        writer.put_string_max(&self.session_token, BasisP2PSignalMessage::MAX_TOKEN_LENGTH);
-        writer.put_bytes_with_length(&self.endpoint_addr);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        writer.put_string_max(&self.session_token, BasisP2PSignalMessage::MAX_TOKEN_LENGTH)?;
+        writer.put_bytes_with_length(&self.endpoint_addr)?;
+        Ok(())
     }
 }
 
@@ -280,11 +292,12 @@ impl BasisP2PIntroduce {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        writer.put_string_max(&self.session_token, BasisP2PSignalMessage::MAX_TOKEN_LENGTH);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        writer.put_string_max(&self.session_token, BasisP2PSignalMessage::MAX_TOKEN_LENGTH)?;
         writer.put_ushort(self.other_player_id);
         writer.put_bool(self.dial);
-        writer.put_bytes_with_length(&self.endpoint_addr);
+        writer.put_bytes_with_length(&self.endpoint_addr)?;
+        Ok(())
     }
 }
 
@@ -335,12 +348,13 @@ pub struct BasisMessageDescriptor {
 }
 
 impl BasisMessageDescriptor {
-    pub fn serialize(&self, writer: &mut NetDataWriter) {
+    pub fn serialize(&self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.id);
         writer.put_byte(self.version);
         writer.put_byte(self.channel);
         writer.put_byte(self.flags);
-        writer.put_string(&self.name);
+        writer.put_string(&self.name)?;
+        Ok(())
     }
 
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> bool {
@@ -366,11 +380,12 @@ pub struct BasisMessageSupply {
 }
 
 impl BasisMessageSupply {
-    pub fn serialize(&self, writer: &mut NetDataWriter) {
+    pub fn serialize(&self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.descriptors.len() as u16);
         for d in &self.descriptors {
-            d.serialize(writer);
+            d.serialize(writer)?;
         }
+        Ok(())
     }
 
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> bool {
@@ -403,11 +418,12 @@ pub struct BasisMessageSubscribe {
 }
 
 impl BasisMessageSubscribe {
-    pub fn serialize(&self, writer: &mut NetDataWriter) {
+    pub fn serialize(&self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.ids.len() as u16);
         for id in &self.ids {
             writer.put_ushort(*id);
         }
+        Ok(())
     }
 
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> bool {

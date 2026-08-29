@@ -2,6 +2,18 @@
 //! Basis uses to prove a player holds the private key behind their DID.
 //!
 //! The C# `Result<T, E>` helper (`Result.cs`) has no counterpart: Rust's own `Result` is used.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unimplemented,
+        clippy::todo,
+        clippy::unreachable
+    )
+)]
+#![deny(unused_must_use)]
 
 pub mod base64_url_safe;
 pub mod did_auth;

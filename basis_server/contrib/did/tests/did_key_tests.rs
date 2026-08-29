@@ -25,7 +25,7 @@ fn did_key_test_vectors() {
         assert!(document.pubkeys.len() == 1);
         let resolved_jwk = &document.pubkeys[&expected_fragment];
         assert!(
-            resolved_jwk.serialize() == expected_jwk.serialize(),
+            resolved_jwk.serialize().unwrap() == expected_jwk.serialize().unwrap(),
             "resolved JWK did not match expected JWK"
         );
     }

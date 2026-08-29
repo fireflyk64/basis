@@ -9,3 +9,4 @@ rust-version.workspace = true
 [dependencies]
 basis_network_core = { path = "../basis_network_core" }
 rayon.workspace = true
+fearless_simd.workspace = true

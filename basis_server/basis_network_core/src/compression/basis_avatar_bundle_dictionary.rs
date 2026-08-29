@@ -1,6 +1,4 @@
-use std::sync::LazyLock;
 
-use base64::Engine;
 
 /// The Zstd dictionary both ends of [`super::BasisAvatarBundleZstd`] compress against.
 ///
@@ -245,17 +243,10 @@ impl BasisAvatarBundleDictionary {
         Self::BASE64_LINES.concat()
     }
 
-    /// Decoded dictionary bytes; empty when no dictionary is embedded.
+    /// Decoded dictionary bytes; empty when no dictionary is embedded. Decoded at build time
+    /// from the same base64 (see `basis_avatar_bundle_dictionary.bin`), so nothing can fail here.
     pub fn bytes() -> &'static [u8] {
-        static BYTES: LazyLock<Vec<u8>> = LazyLock::new(|| {
-            let b64 = BasisAvatarBundleDictionary::base64();
-            if b64.is_empty() {
-                return Vec::new();
-            }
-            base64::engine::general_purpose::STANDARD
-                .decode(b64)
-                .expect("embedded dictionary is valid base64")
-        });
-        &BYTES
+        static BYTES: &[u8] = include_bytes!("basis_avatar_bundle_dictionary.bin");
+        if Self::GENERATION == 0 { &[] } else { BYTES }
     }
 }

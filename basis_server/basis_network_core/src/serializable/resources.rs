@@ -50,14 +50,15 @@ impl ContentShareMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        writer.put_string(&self.sphere_net_id);
-        writer.put_string(&self.content_url);
-        writer.put_string(&self.unlock_password);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        writer.put_string(&self.sphere_net_id)?;
+        writer.put_string(&self.content_url)?;
+        writer.put_string(&self.unlock_password)?;
         writer.put_byte(self.content_type as u8);
         writer.put_float(self.position_x);
         writer.put_float(self.position_y);
         writer.put_float(self.position_z);
+        Ok(())
     }
 }
 
@@ -78,11 +79,12 @@ impl ServerContentShareMessage {
         self.content_share_message.deserialize(reader)
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.player_id_message.serialize(writer);
-        writer.put_string(&self.sharer_uuid);
-        writer.put_string(&self.sharer_display_name);
-        self.content_share_message.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.player_id_message.serialize(writer)?;
+        writer.put_string(&self.sharer_uuid)?;
+        writer.put_string(&self.sharer_display_name)?;
+        self.content_share_message.serialize(writer)?;
+        Ok(())
     }
 }
 
@@ -98,8 +100,9 @@ impl ContentShareCleanupMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        writer.put_string(&self.sphere_net_id);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        writer.put_string(&self.sphere_net_id)?;
+        Ok(())
     }
 }
 
@@ -116,9 +119,10 @@ impl ServerContentShareCleanupMessage {
         self.content_share_cleanup_message.deserialize(reader)
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.player_id_message.serialize(writer);
-        self.content_share_cleanup_message.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.player_id_message.serialize(writer)?;
+        self.content_share_cleanup_message.serialize(writer)?;
+        Ok(())
     }
 }
 
@@ -134,11 +138,12 @@ pub struct ModifyResource {
 }
 
 impl ModifyResource {
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        writer.put_string(&self.loaded_net_id);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        writer.put_string(&self.loaded_net_id)?;
         writer.put_byte(self.mode);
         writer.put_bool(self.r#static);
         writer.put_bool(self.static_admin_locked);
+        Ok(())
     }
 
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
@@ -208,12 +213,12 @@ impl LocalLoadResource {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_byte(self.mode);
-        writer.put_string(&self.loaded_net_id);
-        writer.put_string(&self.unlock_password);
-        writer.put_string(&self.combined_url);
-        writer.put_string(&self.uuid_of_creator);
+        writer.put_string(&self.loaded_net_id)?;
+        writer.put_string(&self.unlock_password)?;
+        writer.put_string(&self.combined_url)?;
+        writer.put_string(&self.uuid_of_creator)?;
         writer.put_bool(self.is_admin_locked);
         writer.put_bool(self.persist);
         writer.put_bool(self.r#static);
@@ -232,6 +237,7 @@ impl LocalLoadResource {
             writer.put_float(self.scale_y);
             writer.put_float(self.scale_z);
         }
+        Ok(())
     }
 }
 
@@ -243,9 +249,10 @@ pub struct PreloadReadyMessage {
 }
 
 impl PreloadReadyMessage {
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        writer.put_string(&self.loaded_net_id);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        writer.put_string(&self.loaded_net_id)?;
         writer.put_bool(self.is_ready);
+        Ok(())
     }
 
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
@@ -262,8 +269,9 @@ pub struct SpawnPreloadedMessage {
 }
 
 impl SpawnPreloadedMessage {
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        writer.put_string(&self.loaded_net_id);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        writer.put_string(&self.loaded_net_id)?;
+        Ok(())
     }
 
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
@@ -281,10 +289,11 @@ pub struct ServerLibraryItem {
 }
 
 impl ServerLibraryItem {
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_byte(self.mode);
-        writer.put_string(&self.url);
-        writer.put_string(&self.password);
+        writer.put_string(&self.url)?;
+        writer.put_string(&self.password)?;
+        Ok(())
     }
 
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
@@ -302,11 +311,12 @@ pub struct ServerLibraryMessage {
 }
 
 impl ServerLibraryMessage {
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.items.len() as u16);
         for item in self.items.iter_mut() {
-            item.serialize(writer);
+            item.serialize(writer)?;
         }
+        Ok(())
     }
 
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
@@ -337,8 +347,9 @@ impl UnLoadResource {
         true
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_byte(self.mode);
-        writer.put_string(&self.loaded_net_id);
+        writer.put_string(&self.loaded_net_id)?;
+        Ok(())
     }
 }

@@ -3,6 +3,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "basis_error",
     "contrib/crypto",
     "contrib/did",
     "contrib/handles_common",
@@ -28,6 +29,7 @@ rust-version = "1.98"
 repository = "https://github.com/BasisVR/Basis"
 
 [workspace.dependencies]
+basis_error = { path = "basis_error" }
 # Networking. iroh is the transport (QUIC streams + datagrams, hole punching, relays).
 iroh = { version = "1.1", default-features = false, features = ["tls-ring", "metrics"] }
 iroh-base = "1.1"
@@ -43,9 +45,11 @@ hyper = "1.11"
 # Sync primitives / collections.
 parking_lot = "0.12"
 dashmap = "6"
+unicode-segmentation = "1"
 arc-swap = "1"
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
+crossbeam-queue = "0.3"
 rayon = "1.12"
 # Serialization and config files.
 serde = { version = "1", features = ["derive"] }

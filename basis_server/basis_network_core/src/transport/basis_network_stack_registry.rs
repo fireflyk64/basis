@@ -96,7 +96,7 @@ impl BasisNetworkStackRegistry {
     }
 
     fn register_builtins(state: &mut RegistryState) {
-        let iroh: NetManagerFactory = Arc::new(|listener, config| IrohNetManager::create(listener, config));
+        let iroh: NetManagerFactory = Arc::new(IrohNetManager::create);
         Self::register_into(state, Self::IROH_ID, "iroh", iroh);
         if let Some(slot) = state.slots.get_mut(&key(Self::IROH_ID)) {
             slot.parser = Some(Arc::new(IrohConnectionTargetParser));

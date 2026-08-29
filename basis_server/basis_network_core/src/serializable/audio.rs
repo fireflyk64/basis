@@ -33,12 +33,13 @@ impl AudioSegmentDataMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_byte(self.sequence_number);
         writer.put_byte(self.total_played_in_silence);
         if self.length_used != 0 {
-            writer.put_bytes_range(&self.buffer, 0, self.length_used);
+            writer.put_bytes_range(&self.buffer, 0, self.length_used)?;
         }
+        Ok(())
     }
 }
 
@@ -59,14 +60,16 @@ impl ServerAudioSegmentMessage {
         self.audio_segment_data.deserialize(reader)
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.player_id_message.serialize(writer);
-        self.audio_segment_data.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.player_id_message.serialize(writer)?;
+        self.audio_segment_data.serialize(writer)?;
+        Ok(())
     }
 
-    pub fn serialize_sized(&mut self, writer: &mut NetDataWriter, large_id: bool) {
-        self.player_id_message.serialize_sized(writer, large_id);
-        self.audio_segment_data.serialize(writer);
+    pub fn serialize_sized(&mut self, writer: &mut NetDataWriter, large_id: bool) -> NetResult<()> {
+        self.player_id_message.serialize_sized(writer, large_id)?;
+        self.audio_segment_data.serialize(writer)?;
+        Ok(())
     }
 }
 
@@ -133,18 +136,19 @@ impl VoiceReceiversMessage {
     }
 
     /// Equivalent to `serialize_sized(writer, true)` — always writes a 2-byte count.
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.serialize_sized(writer, true);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.serialize_sized(writer, true)?;
+        Ok(())
     }
 
     /// `large_count` must match the channel the packet will be sent on.
-    pub fn serialize_sized(&mut self, writer: &mut NetDataWriter, large_count: bool) {
+    pub fn serialize_sized(&mut self, writer: &mut NetDataWriter, large_count: bool) -> NetResult<()> {
         let users_length = self.users.as_ref().map(|u| u.len()).unwrap_or(0);
         let max_count = if large_count { u16::MAX as usize } else { u8::MAX as usize };
         if users_length == 0 {
             // Still write a 0-length so read side stays in sync
             if large_count { writer.put_ushort(0) } else { writer.put_byte(0) }
-            return;
+            return Ok(());
         }
         if users_length > max_count {
             BNL::log_error(format!(
@@ -154,10 +158,13 @@ impl VoiceReceiversMessage {
         }
         let count = users_length.min(max_count);
         if large_count { writer.put_ushort(count as u16) } else { writer.put_byte(count as u8) }
-        let users = self.users.as_ref().unwrap();
+        let Some(users) = self.users.as_ref() else {
+            return Ok(());
+        };
         for u in users.iter().take(count) {
             writer.put_ushort(*u);
         }
+        Ok(())
     }
 
     /// The C# returned a rented array to the pool; here it just clears.

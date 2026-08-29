@@ -28,8 +28,8 @@ pub struct JsonWebKey {
 
 impl JsonWebKey {
     /// Compact JSON with null members omitted, like the C# serializer settings.
-    pub fn serialize(&self) -> String {
-        serde_json::to_string(self).expect("JsonWebKey is always serializable")
+    pub fn serialize(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
     }
 
     pub fn deserialize(json: &str) -> Option<JsonWebKey> {

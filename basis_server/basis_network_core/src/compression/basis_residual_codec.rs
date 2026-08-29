@@ -31,19 +31,27 @@ impl BasisResidualCodec {
     }
 }
 
-/// Overwriting LSB-first bit writer. Does not require a pre-cleared buffer.
+/// Overwriting LSB-first bit writer. Does not require a pre-cleared buffer. A write past the
+/// end of the buffer is dropped and latches [`overflowed`](Self::overflowed) — callers size
+/// their buffers from the layout, so this only ever guards a bug, but it never faults.
 pub struct BitWriter<'a> {
     buf: &'a mut [u8],
     bit: usize,
+    overflowed: bool,
 }
 
 impl<'a> BitWriter<'a> {
     pub fn new(buffer: &'a mut [u8], start_bit: usize) -> Self {
-        Self { buf: buffer, bit: start_bit }
+        Self { buf: buffer, bit: start_bit, overflowed: false }
     }
 
     pub fn bit_position(&self) -> usize {
         self.bit
+    }
+
+    /// True once a write did not fit the buffer; the output is then incomplete.
+    pub fn overflowed(&self) -> bool {
+        self.overflowed
     }
 
     pub fn write_bits(&mut self, mut value: u64, count: u32) {
@@ -57,7 +65,11 @@ impl<'a> BitWriter<'a> {
             let low_mask = (1u32 << take) - 1;
             let clear = (low_mask << in_byte) as u8;
             let chunk = (((value as u32) & low_mask) << in_byte) as u8;
-            self.buf[byte_pos] = (self.buf[byte_pos] & !clear) | chunk;
+            let Some(byte) = self.buf.get_mut(byte_pos) else {
+                self.overflowed = true;
+                return;
+            };
+            *byte = (*byte & !clear) | chunk;
             value >>= take;
             left -= take;
             byte_pos += 1;

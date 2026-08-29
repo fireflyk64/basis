@@ -1,6 +1,7 @@
 use crate::io::{NetDataError, NetDataReader, NetDataWriter, NetResult};
 
 use super::identity::PlayerIdMessage;
+use crate::io::net_data_reader::NetResultExt;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RemoteSceneDataMessage {
@@ -11,9 +12,7 @@ pub struct RemoteSceneDataMessage {
 
 impl RemoteSceneDataMessage {
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
-        self.message_index = reader
-            .try_get_ushort()
-            .ok_or_else(|| NetDataError("Failed to read messageIndex.".into()))?;
+        self.message_index = reader.get_ushort().field("messageIndex")?;
         let payload_size = reader.available_bytes();
         if payload_size > 0 {
             self.payload = Some(reader.get_bytes_vec(payload_size)?);
@@ -22,14 +21,15 @@ impl RemoteSceneDataMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.message_index);
         if let Some(payload) = &self.payload {
             let len = if self.payload_length > 0 { self.payload_length.min(payload.len()) } else { payload.len() };
             if len > 0 {
-                writer.put_bytes_range(payload, 0, len);
+                writer.put_bytes_range(payload, 0, len)?;
             }
         }
+        Ok(())
     }
 
     pub fn release(&mut self) {
@@ -49,21 +49,17 @@ pub struct SceneDataMessage {
 
 impl SceneDataMessage {
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
-        self.message_index = reader
-            .try_get_ushort()
-            .ok_or_else(|| NetDataError("Failed to read messageIndex.".into()))?;
+        self.message_index = reader.get_ushort().field("messageIndex")?;
         match reader.try_get_ushort() {
             Some(recipients_size) => {
                 self.recipients_size = recipients_size;
                 // Guard against absurd sizes
                 if usize::from(recipients_size) > reader.available_bytes() / 2 {
-                    return Err(NetDataError(format!("Invalid recipientsSize: {recipients_size}")));
+                    return Err(NetDataError::invalid("recipientsSize", format!("{recipients_size}")));
                 }
                 let mut recipients = Vec::with_capacity(usize::from(recipients_size));
-                for index in 0..recipients_size {
-                    let r = reader
-                        .try_get_ushort()
-                        .ok_or_else(|| NetDataError(format!("Failed to read recipient at index {index}.")))?;
+                for _ in 0..recipients_size {
+                    let r = reader.get_ushort().field("recipients")?;
                     recipients.push(r);
                 }
                 self.recipients = Some(recipients);
@@ -80,7 +76,7 @@ impl SceneDataMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.message_index);
         self.recipients_size = self.recipients.as_ref().map(|r| r.len() as u16).unwrap_or(0);
         writer.put_ushort(self.recipients_size);
@@ -94,6 +90,7 @@ impl SceneDataMessage {
         {
             writer.put_bytes(payload);
         }
+        Ok(())
     }
 }
 
@@ -109,8 +106,9 @@ impl ServerSceneDataMessage {
         self.scene_data_message.deserialize(reader)
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.player_id_message.serialize(writer);
-        self.scene_data_message.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.player_id_message.serialize(writer)?;
+        self.scene_data_message.serialize(writer)?;
+        Ok(())
     }
 }

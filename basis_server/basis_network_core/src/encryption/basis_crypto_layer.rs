@@ -1,7 +1,8 @@
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use basis_crypto::BasisAeadCipher;
+use crate::diagnostics::bnl::BNL;
+use basis_crypto::{AeadError, BasisAeadCipher};
 use dashmap::DashMap;
 
 /// Per-endpoint AEAD encryption applied at the datagram boundary. Each connection has its own
@@ -65,13 +66,20 @@ impl BasisCryptoLayer {
     /// `initial_send_counter`: first nonce counter to use. Pass a value strictly greater than any
     /// counter previously used with these keys when re-installing the same keys for a reconnect,
     /// so a (key, nonce) pair is never reused.
-    pub fn set_endpoint_keys(&self, endpoint: SocketAddr, send_key: &[u8], recv_key: &[u8], initial_send_counter: i64) {
+    pub fn set_endpoint_keys(
+        &self,
+        endpoint: SocketAddr,
+        send_key: &[u8],
+        recv_key: &[u8],
+        initial_send_counter: i64,
+    ) -> Result<(), AeadError> {
         let session = Session {
-            send: BasisAeadCipher::new(send_key),
-            recv: BasisAeadCipher::new(recv_key),
+            send: BasisAeadCipher::new(send_key)?,
+            recv: BasisAeadCipher::new(recv_key)?,
             send_counter: AtomicI64::new(initial_send_counter),
         };
         self.sessions.insert(endpoint, session);
+        Ok(())
     }
 
     pub fn has_endpoint(&self, endpoint: SocketAddr) -> bool {
@@ -90,12 +98,16 @@ impl BasisCryptoLayer {
 
     /// Encrypts `data[offset..offset+length]` in place, appending the tag and counter. Returns the
     /// new length (`length + OVERHEAD`), or `length` unchanged when the packet is not encryptable
-    /// or the endpoint has no session. `data` must have `OVERHEAD` bytes of slack past `length`.
+    /// or the endpoint has no session. Returns 0 — drop the packet — when the buffer does not
+    /// have `OVERHEAD` bytes of slack past `length` or sealing failed: a packet that should have
+    /// been encrypted must never leave in the clear.
     pub fn process_out_bound_packet(&self, end_point: SocketAddr, data: &mut [u8], offset: usize, length: usize) -> usize {
         if length < 1 {
             return length;
         }
-        let header = data[offset];
+        let Some(&header) = data.get(offset) else {
+            return 0;
+        };
         if !Self::is_encryptable(header & Self::PROPERTY_MASK) {
             return length;
         }
@@ -107,9 +119,22 @@ impl BasisCryptoLayer {
         let nonce = Self::write_counter(counter);
 
         let tag_offset = offset + length;
-        let (payload, rest) = data[offset + 1..].split_at_mut(length - 1);
-        session.send.seal(&nonce, header, payload, &mut rest[..BasisAeadCipher::TAG_SIZE]);
-        Self::write_counter_bytes(data, tag_offset + BasisAeadCipher::TAG_SIZE, counter);
+        let Some(body) = data.get_mut(offset + 1..) else {
+            return 0;
+        };
+        let Some((payload, rest)) = body.split_at_mut_checked(length - 1) else {
+            return 0;
+        };
+        let Some(tag_dest) = rest.get_mut(..BasisAeadCipher::TAG_SIZE) else {
+            return 0;
+        };
+        if let Err(e) = session.send.seal(&nonce, header, payload, tag_dest) {
+            BNL::log_error(format!("[Crypto] seal failed for {end_point}: {e}"));
+            return 0;
+        }
+        if !Self::write_counter_bytes(data, tag_offset + BasisAeadCipher::TAG_SIZE, counter) {
+            return 0;
+        }
         length + Self::OVERHEAD
     }
 
@@ -120,25 +145,37 @@ impl BasisCryptoLayer {
         if length < 1 {
             return length;
         }
-        let header = data[0];
+        let Some(&header) = data.first() else {
+            return 0;
+        };
         if !Self::is_encryptable(header & Self::PROPERTY_MASK) {
             return length;
         }
         let Some(session) = self.sessions.get(&end_point) else {
             return length;
         };
-        if length < 1 + Self::OVERHEAD {
+        if length < 1 + Self::OVERHEAD || length > data.len() {
             return 0;
         }
 
         let tag_offset = length - Self::OVERHEAD;
         let counter_offset = length - Self::COUNTER_SIZE;
-        let counter = Self::read_counter_bytes(data, counter_offset);
+        let Some(counter) = Self::read_counter_bytes(data, counter_offset) else {
+            return 0;
+        };
         let nonce = Self::write_counter(counter);
 
         let payload_length = tag_offset - 1;
-        let (payload, rest) = data[1..].split_at_mut(payload_length);
-        if !session.recv.open(&nonce, header, payload, &rest[..BasisAeadCipher::TAG_SIZE]) {
+        let Some(body) = data.get_mut(1..) else {
+            return 0;
+        };
+        let Some((payload, rest)) = body.split_at_mut_checked(payload_length) else {
+            return 0;
+        };
+        let Some(tag) = rest.get(..BasisAeadCipher::TAG_SIZE) else {
+            return 0;
+        };
+        if session.recv.open(&nonce, header, payload, tag).is_err() {
             return 0;
         }
         length - Self::OVERHEAD
@@ -153,15 +190,26 @@ impl BasisCryptoLayer {
 
     fn write_counter(counter: i64) -> [u8; BasisAeadCipher::NONCE_SIZE] {
         let mut nonce = [0u8; BasisAeadCipher::NONCE_SIZE];
-        nonce[..8].copy_from_slice(&(counter as u64).to_le_bytes());
+        let bytes = (counter as u64).to_le_bytes();
+        for (dst, src) in nonce.iter_mut().zip(bytes) {
+            *dst = src;
+        }
         nonce
     }
 
-    fn write_counter_bytes(buffer: &mut [u8], offset: usize, counter: i64) {
-        buffer[offset..offset + 8].copy_from_slice(&(counter as u64).to_le_bytes());
+    /// False when the buffer has no room for the counter at `offset`.
+    fn write_counter_bytes(buffer: &mut [u8], offset: usize, counter: i64) -> bool {
+        match offset.checked_add(8).and_then(|end| buffer.get_mut(offset..end)) {
+            Some(dst) => {
+                dst.copy_from_slice(&(counter as u64).to_le_bytes());
+                true
+            }
+            None => false,
+        }
     }
 
-    fn read_counter_bytes(buffer: &[u8], offset: usize) -> i64 {
-        u64::from_le_bytes(buffer[offset..offset + 8].try_into().unwrap()) as i64
+    fn read_counter_bytes(buffer: &[u8], offset: usize) -> Option<i64> {
+        let bytes = <[u8; 8]>::try_from(buffer.get(offset..offset.checked_add(8)?)?).ok()?;
+        Some(u64::from_le_bytes(bytes) as i64)
     }
 }

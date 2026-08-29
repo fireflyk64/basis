@@ -7,8 +7,8 @@ use parking_lot::Mutex;
 use crate::BNL;
 use crate::transport::basis_network_stack_registry::BasisNetworkStackRegistry;
 
-use super::BasisXmlConfig;
-use super::basis_config_xml_docs::BasisConfigXmlDocs;
+use super::{BasisXmlConfig, ConfigFieldError};
+use super::basis_config_xml_docs::{BasisConfigXmlDocs, ConfigXmlError};
 
 /// A transport config held by the store without knowing its concrete type — the object-typed
 /// half of the C# store (`object Get(string)`), with the XML operations the store needs.
@@ -18,14 +18,14 @@ pub trait BasisTransportConfigObject: Send + Sync {
     fn clone_box(&self) -> Box<dyn BasisTransportConfigObject>;
     fn type_name(&self) -> &'static str;
     fn xml_root(&self) -> &'static str;
-    fn to_xml(&self) -> String;
-    fn load_xml(&mut self, xml: &str) -> Result<(), String>;
+    fn to_xml(&self) -> Result<String, ConfigXmlError>;
+    fn load_xml(&mut self, xml: &str) -> Result<(), ConfigXmlError>;
     fn needs_upgrade(&self, path: &Path) -> bool;
     fn stamp_version(&mut self);
     fn read_version(&self) -> i32;
     fn migrate_from(&mut self, loaded_version: i32);
     fn get_field(&self, name: &str) -> Option<String>;
-    fn set_field(&mut self, name: &str, value: &str) -> Result<(), String>;
+    fn set_field(&mut self, name: &str, value: &str) -> Result<(), ConfigFieldError>;
     fn field_kind(&self, name: &str) -> Option<super::FieldKind>;
 }
 
@@ -45,11 +45,11 @@ impl<T: BasisXmlConfig> BasisTransportConfigObject for T {
     fn xml_root(&self) -> &'static str {
         T::XML_ROOT
     }
-    fn to_xml(&self) -> String {
+    fn to_xml(&self) -> Result<String, ConfigXmlError> {
         BasisConfigXmlDocs::serialize(self)
     }
-    fn load_xml(&mut self, xml: &str) -> Result<(), String> {
-        *self = BasisConfigXmlDocs::deserialize::<T>(xml).map_err(|e| e.to_string())?;
+    fn load_xml(&mut self, xml: &str) -> Result<(), ConfigXmlError> {
+        *self = BasisConfigXmlDocs::deserialize::<T>(xml)?;
         Ok(())
     }
     fn needs_upgrade(&self, path: &Path) -> bool {
@@ -67,7 +67,7 @@ impl<T: BasisXmlConfig> BasisTransportConfigObject for T {
     fn get_field(&self, name: &str) -> Option<String> {
         BasisXmlConfig::get_field(self, name)
     }
-    fn set_field(&mut self, name: &str, value: &str) -> Result<(), String> {
+    fn set_field(&mut self, name: &str, value: &str) -> Result<(), ConfigFieldError> {
         BasisXmlConfig::set_field(self, name, value)
     }
     fn field_kind(&self, name: &str) -> Option<super::FieldKind> {
@@ -162,8 +162,16 @@ impl BasisTransportConfigStore {
                 s.ids.entry(k.clone()).or_insert_with(|| id.to_string());
                 s.configs.insert(k.clone(), Box::new(T::default()));
             }
-            let obj = s.configs.get_mut(&k).unwrap();
-            f(obj.as_any_mut().downcast_mut::<T>().unwrap())
+            match s.configs.get_mut(&k).and_then(|obj| obj.as_any_mut().downcast_mut::<T>()) {
+                Some(config) => f(config),
+                None => {
+                    // Unreachable after the insert above; handled rather than trusted.
+                    let mut fresh = T::default();
+                    let result = f(&mut fresh);
+                    s.configs.insert(k, Box::new(fresh));
+                    result
+                }
+            }
         })
     }
 
@@ -258,8 +266,8 @@ impl BasisTransportConfigStore {
 
     fn load_or_create(create: fn() -> Box<dyn BasisTransportConfigObject>, path: &Path) -> Box<dyn BasisTransportConfigObject> {
         if path.exists() {
-            let attempt = (|| -> Result<Box<dyn BasisTransportConfigObject>, String> {
-                let xml = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+            let attempt = (|| -> Result<Box<dyn BasisTransportConfigObject>, ConfigXmlError> {
+                let xml = std::fs::read_to_string(path)?;
                 let mut loaded = create();
                 loaded.load_xml(&xml)?;
                 // Retire values a newer build knows are harmful, before the upgrade re-saves.
@@ -281,8 +289,13 @@ impl BasisTransportConfigStore {
         }
         let mut created = create();
         created.stamp_version();
-        if let Err(e) = std::fs::write(path, created.to_xml()) {
-            BNL::log_warning(format!("Failed to write transport config '{}': {e}", path.display()));
+        match created.to_xml() {
+            Ok(xml) => {
+                if let Err(e) = std::fs::write(path, xml) {
+                    BNL::log_warning(format!("Failed to write transport config '{}': {e}", path.display()));
+                }
+            }
+            Err(e) => BNL::log_warning(format!("Failed to serialize transport config '{}': {e}", path.display())),
         }
         created
     }
@@ -290,7 +303,9 @@ impl BasisTransportConfigStore {
     fn save_atomic(config: &mut dyn BasisTransportConfigObject, path: &Path) {
         config.stamp_version();
         let temp_path = PathBuf::from(format!("{}.tmp", path.display()));
-        let result = std::fs::write(&temp_path, config.to_xml()).and_then(|_| std::fs::rename(&temp_path, path));
+        let result = config
+            .to_xml()
+            .and_then(|xml| Ok(std::fs::write(&temp_path, xml).and_then(|_| std::fs::rename(&temp_path, path))?));
         if let Err(e) = result {
             BNL::log_warning(format!("Failed to save transport config '{}': {e}", path.display()));
         }

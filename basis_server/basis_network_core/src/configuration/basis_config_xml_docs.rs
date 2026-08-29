@@ -7,6 +7,7 @@ use quick_xml::Reader;
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
+use super::ConfigFieldError;
 use super::BasisXmlConfig;
 
 /// One documented field: its XML element name, the comment written above it, and an optional
@@ -38,9 +39,11 @@ pub enum ConfigXmlError {
     #[error("<{0} xmlns=''> was not expected")]
     WrongRoot(String),
     #[error("{0}")]
-    BadValue(String),
+    BadValue(#[from] ConfigFieldError),
     #[error("{0}")]
     Io(#[from] std::io::Error),
+    #[error("xml write failed: {0}")]
+    Xml(String),
 }
 
 static DOCS: LazyLock<HashMap<&'static str, TypeDoc>> = LazyLock::new(|| {
@@ -62,13 +65,13 @@ impl BasisConfigXmlDocs {
     const XSD: &'static str = "http://www.w3.org/2001/XMLSchema";
 
     /// Serialize `value` with doc comments injected, as the text `XmlSerializer` + `XDocument.Save` produced.
-    pub fn serialize<T: BasisXmlConfig>(value: &T) -> String {
+    pub fn serialize<T: BasisXmlConfig>(value: &T) -> Result<String, ConfigXmlError> {
         let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
-        writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None))).unwrap();
+        writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
         let mut root = BytesStart::new(T::XML_ROOT);
         root.push_attribute(("xmlns:xsi", Self::XSI));
         root.push_attribute(("xmlns:xsd", Self::XSD));
-        writer.write_event(Event::Start(root)).unwrap();
+        writer.write_event(Event::Start(root)).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
 
         let doc = DOCS.get(T::XML_ROOT);
         let by_field: HashMap<&str, &FieldDoc> = doc
@@ -77,26 +80,26 @@ impl BasisConfigXmlDocs {
         if let Some(d) = doc
             && !d.header.is_empty()
         {
-            writer.write_event(Event::Comment(BytesText::from_escaped(d.header))).unwrap();
+            writer.write_event(Event::Comment(BytesText::from_escaped(d.header))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
         }
         for name in T::field_names() {
             if let Some(info) = by_field.get(name) {
                 if let Some(section) = info.section
                     && !section.is_empty()
                 {
-                    writer.write_event(Event::Comment(BytesText::from_escaped(section))).unwrap();
+                    writer.write_event(Event::Comment(BytesText::from_escaped(section))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
                 }
                 if !info.comment.is_empty() {
-                    writer.write_event(Event::Comment(BytesText::from_escaped(info.comment))).unwrap();
+                    writer.write_event(Event::Comment(BytesText::from_escaped(info.comment))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
                 }
             }
             let text = value.get_field(name).unwrap_or_default();
-            writer.write_event(Event::Start(BytesStart::new(*name))).unwrap();
-            writer.write_event(Event::Text(BytesText::new(&text))).unwrap();
-            writer.write_event(Event::End(BytesEnd::new(*name))).unwrap();
+            writer.write_event(Event::Start(BytesStart::new(*name))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
+            writer.write_event(Event::Text(BytesText::new(&text))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
+            writer.write_event(Event::End(BytesEnd::new(*name))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
         }
-        writer.write_event(Event::End(BytesEnd::new(T::XML_ROOT))).unwrap();
-        String::from_utf8(writer.into_inner().into_inner()).expect("xml is utf-8")
+        writer.write_event(Event::End(BytesEnd::new(T::XML_ROOT))).map_err(|e| ConfigXmlError::Xml(e.to_string()))?;
+        String::from_utf8(writer.into_inner().into_inner()).map_err(|e| ConfigXmlError::Xml(e.to_string()))
     }
 
     /// Deserializes `xml` the way `XmlSerializer.Deserialize` did: the root must be the type's
@@ -110,10 +113,10 @@ impl BasisConfigXmlDocs {
         // Root
         let root_name = loop {
             match reader.read_event_into(&mut buf).map_err(|e| ConfigXmlError::Malformed(e.to_string()))? {
-                Event::Start(e) => break String::from_utf8_lossy(e.name().as_ref()).into_owned(),
+                Event::Start(e) => break e.name().as_ref().to_owned(),
                 Event::Eof => return Err(ConfigXmlError::NoRoot),
                 Event::Empty(e) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                    let name = e.name().as_ref().to_owned();
                     if name != T::XML_ROOT {
                         return Err(ConfigXmlError::WrongRoot(name));
                     }
@@ -128,7 +131,7 @@ impl BasisConfigXmlDocs {
         loop {
             match reader.read_event_into(&mut buf).map_err(|e| ConfigXmlError::Malformed(e.to_string()))? {
                 Event::Start(e) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                    let name = e.name().as_ref().to_owned();
                     let end = e.to_end().into_owned();
                     let text = reader
                         .read_text(end.name())
@@ -137,11 +140,11 @@ impl BasisConfigXmlDocs {
                         let unescaped = quick_xml::escape::unescape(&text)
                             .map(|c| c.into_owned())
                             .unwrap_or_else(|_| text.to_string());
-                        value.set_field(&name, unescaped.trim()).map_err(ConfigXmlError::BadValue)?;
+                        value.set_field(&name, unescaped.trim())?;
                     }
                 }
                 Event::Empty(e) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                    let name = e.name().as_ref().to_owned();
                     if T::field_kind(&name).is_some() {
                         value.set_field(&name, "").map_err(ConfigXmlError::BadValue)?;
                     }
@@ -184,12 +187,12 @@ impl BasisConfigXmlDocs {
                 Event::Start(e) => {
                     depth += 1;
                     if depth == 2 {
-                        names.insert(String::from_utf8_lossy(e.name().as_ref()).into_owned());
+                        names.insert(e.name().as_ref().to_owned());
                     }
                 }
                 Event::Empty(e) => {
                     if depth == 1 {
-                        names.insert(String::from_utf8_lossy(e.name().as_ref()).into_owned());
+                        names.insert(e.name().as_ref().to_owned());
                     }
                 }
                 Event::End(_) => depth = depth.saturating_sub(1),

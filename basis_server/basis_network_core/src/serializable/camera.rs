@@ -16,7 +16,7 @@ pub struct CameraPIPStateMessage {
 }
 
 impl CameraPIPStateMessage {
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.player_id);
         writer.put_bool(self.is_active);
         if self.is_active {
@@ -28,6 +28,7 @@ impl CameraPIPStateMessage {
             writer.put_float(self.rotation_z);
             writer.put_float(self.rotation_w);
         }
+        Ok(())
     }
 
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
@@ -60,7 +61,7 @@ pub struct CameraPIPPositionMessage {
 }
 
 impl CameraPIPPositionMessage {
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.player_id);
         writer.put_float(self.position_x);
         writer.put_float(self.position_y);
@@ -69,6 +70,7 @@ impl CameraPIPPositionMessage {
         writer.put_float(self.rotation_y);
         writer.put_float(self.rotation_z);
         writer.put_float(self.rotation_w);
+        Ok(())
     }
 
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
@@ -98,7 +100,7 @@ pub struct ClientCameraPIPStateMessage {
 }
 
 impl ClientCameraPIPStateMessage {
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_bool(self.is_active);
         if self.is_active {
             writer.put_float(self.position_x);
@@ -109,6 +111,7 @@ impl ClientCameraPIPStateMessage {
             writer.put_float(self.rotation_z);
             writer.put_float(self.rotation_w);
         }
+        Ok(())
     }
 
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
@@ -139,7 +142,7 @@ pub struct ClientCameraPIPPositionMessage {
 }
 
 impl ClientCameraPIPPositionMessage {
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_float(self.position_x);
         writer.put_float(self.position_y);
         writer.put_float(self.position_z);
@@ -147,6 +150,7 @@ impl ClientCameraPIPPositionMessage {
         writer.put_float(self.rotation_y);
         writer.put_float(self.rotation_z);
         writer.put_float(self.rotation_w);
+        Ok(())
     }
 
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
@@ -168,8 +172,9 @@ pub struct CameraShutterSoundMessage {
 }
 
 impl CameraShutterSoundMessage {
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.player_id);
+        Ok(())
     }
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
         self.player_id = reader.get_ushort()?;
@@ -185,9 +190,10 @@ pub struct CameraCountdownMessage {
 }
 
 impl CameraCountdownMessage {
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.player_id);
         writer.put_byte(self.seconds);
+        Ok(())
     }
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
         self.player_id = reader.get_ushort()?;
@@ -203,8 +209,9 @@ pub struct ClientCameraCountdownMessage {
 }
 
 impl ClientCameraCountdownMessage {
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_byte(self.seconds);
+        Ok(())
     }
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
         self.seconds = reader.get_byte()?;

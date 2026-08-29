@@ -23,21 +23,16 @@ impl BasisCompactId {
 
     const HEX_FLAG_UPPER: u8 = 1;
 
-    pub fn write(writer: &mut NetDataWriter, value: &str) {
-        if Self::try_write_uuid(writer, value) {
-            return;
-        }
-        if Self::try_write_uint64(writer, value) {
-            return;
-        }
-        if Self::try_write_did_key(writer, value) {
-            return;
-        }
-        if Self::try_write_hex(writer, value) {
-            return;
+    pub fn write(writer: &mut NetDataWriter, value: &str) -> NetResult<()> {
+        if Self::try_write_uuid(writer, value)
+            || Self::try_write_uint64(writer, value)
+            || Self::try_write_did_key(writer, value)
+            || Self::try_write_hex(writer, value)
+        {
+            return Ok(());
         }
         writer.put_byte(Self::TAG_RAW);
-        writer.put_string(value);
+        writer.put_string(value)
     }
 
     pub fn read(reader: &mut NetDataReader) -> NetResult<String> {
@@ -186,8 +181,10 @@ impl BasisCompactId {
         let count = value.len() / 2;
         let bytes: Vec<u8> = value
             .as_bytes()
-            .chunks_exact(2)
-            .map(|p| (Self::hex_val(p[0] as char).unwrap() << 4) | Self::hex_val(p[1] as char).unwrap())
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|p| (Self::hex_val(p[0] as char).unwrap_or(0) << 4) | Self::hex_val(p[1] as char).unwrap_or(0))
             .collect();
         writer.put_byte(Self::TAG_HEX);
         writer.put_byte(if upper { Self::HEX_FLAG_UPPER } else { 0 });
@@ -259,15 +256,15 @@ impl BasisPlatformCodec {
         "Headless",
     ];
 
-    pub fn write(writer: &mut NetDataWriter, platform: &str) {
+    pub fn write(writer: &mut NetDataWriter, platform: &str) -> NetResult<()> {
         for (i, known) in Self::KNOWN.iter().enumerate() {
             if *known == platform {
                 writer.put_byte((i + 1) as u8);
-                return;
+                return Ok(());
             }
         }
         writer.put_byte(Self::TAG_RAW);
-        writer.put_string(platform);
+        writer.put_string(platform)
     }
 
     pub fn read(reader: &mut NetDataReader) -> NetResult<String> {
@@ -296,10 +293,11 @@ impl ClientMetaDataMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        BasisCompactId::write(writer, if self.player_uuid.is_empty() { "Failure" } else { &self.player_uuid });
-        writer.put_string(if self.player_display_name.is_empty() { "Failure" } else { &self.player_display_name });
-        BasisPlatformCodec::write(writer, if self.player_platform.is_empty() { "Failure" } else { &self.player_platform });
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        BasisCompactId::write(writer, if self.player_uuid.is_empty() { "Failure" } else { &self.player_uuid })?;
+        writer.put_string(if self.player_display_name.is_empty() { "Failure" } else { &self.player_display_name })?;
+        BasisPlatformCodec::write(writer, if self.player_platform.is_empty() { "Failure" } else { &self.player_platform })?;
+        Ok(())
     }
 }
 
@@ -319,12 +317,13 @@ impl NetIDMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         if !self.player_id.is_empty() {
-            writer.put_string(&self.player_id);
+            writer.put_string(&self.player_id)?;
         } else {
             BNL::log_error("Unable to serialize. Field was null or empty.");
         }
+        Ok(())
     }
 }
 
@@ -341,9 +340,10 @@ impl OwnershipTransferMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.player_id_message.serialize(writer);
-        writer.put_string(&self.ownership_id);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.player_id_message.serialize(writer)?;
+        writer.put_string(&self.ownership_id)?;
+        Ok(())
     }
 }
 
@@ -368,17 +368,19 @@ impl PlayerIdMessage {
         Ok(())
     }
 
-    pub fn serialize(&self, writer: &mut NetDataWriter) {
+    pub fn serialize(&self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.player_id);
+        Ok(())
     }
 
     /// `large_id`: false = write byte, true = write ushort.
-    pub fn serialize_sized(&self, writer: &mut NetDataWriter, large_id: bool) {
+    pub fn serialize_sized(&self, writer: &mut NetDataWriter, large_id: bool) -> NetResult<()> {
         if large_id {
             writer.put_ushort(self.player_id);
         } else {
             writer.put_byte(self.player_id as u8);
         }
+        Ok(())
     }
 }
 
@@ -445,8 +447,8 @@ impl ServerMetaDataMessage {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.client_meta_data_message.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.client_meta_data_message.serialize(writer)?;
 
         if self.sync_interval == 0 {
             self.sync_interval = 50;
@@ -471,18 +473,19 @@ impl ServerMetaDataMessage {
         writer.put_float(self.slowest_send_rate);
         writer.put_int(self.peer_limit);
 
-        writer.put_bytes_with_length(&self.permissions_bitset);
+        writer.put_bytes_with_length(&self.permissions_bitset)?;
 
         let extra_count = self.extra_permissions.len() as u16;
         writer.put_ushort(extra_count);
         if extra_count > 0 {
             let compressed = PermissionCompression::compress_extras(&self.extra_permissions);
-            writer.put_bytes_with_length(&compressed);
+            writer.put_bytes_with_length(&compressed)?;
         }
 
         writer.put_byte(u8::from(self.uplink_delta_enabled));
         writer.put_int(self.image_share_egress_megabits_per_second);
         writer.put_float(self.image_pickup_range_meters);
+        Ok(())
     }
 }
 
@@ -500,9 +503,10 @@ impl ServerNetIDMessage {
         self.ushort_unique_id_message.deserialize(reader)
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
-        self.net_id_message.serialize(writer);
-        self.ushort_unique_id_message.serialize(writer);
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
+        self.net_id_message.serialize(writer)?;
+        self.ushort_unique_id_message.serialize(writer)?;
+        Ok(())
     }
 }
 
@@ -531,17 +535,18 @@ impl ServerUniqueIDMessages {
         Ok(())
     }
 
-    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) -> NetResult<()> {
         match self.messages.as_mut() {
             Some(messages) => {
                 self.message_count = messages.len() as u16;
                 writer.put_ushort(self.message_count);
                 for message in messages.iter_mut() {
-                    message.serialize(writer);
+                    message.serialize(writer)?;
                 }
             }
             None => BNL::log_error("Unable to serialize. Messages array was null."),
         }
+        Ok(())
     }
 }
 
@@ -561,7 +566,8 @@ impl UshortUniqueIDMessage {
         Ok(())
     }
 
-    pub fn serialize(&self, writer: &mut NetDataWriter) {
+    pub fn serialize(&self, writer: &mut NetDataWriter) -> NetResult<()> {
         writer.put_ushort(self.unique_id_ushort);
+        Ok(())
     }
 }

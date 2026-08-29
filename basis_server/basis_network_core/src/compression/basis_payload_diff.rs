@@ -1,4 +1,4 @@
-use fearless_simd::{Level, Simd, SimdBase, dispatch, u8x32};
+use fearless_simd::{Level, Simd, SimdBase, SimdMask, dispatch, u8x32};
 
 /// Finds which 8-byte words of an avatar payload differ from its keyframe, as a bitmap, so the
 /// delta encoder can rule fields out wholesale instead of unpacking every channel of every one.
@@ -18,6 +18,8 @@ impl BasisPayloadDiff {
     /// the first `length` bytes. Both buffers must have at least `length` bytes; `length` must not
     /// exceed `MAX_PAYLOAD_BYTES`.
     pub fn word_diff_mask(current: &[u8], baseline: &[u8], length: usize) -> u64 {
+        // Never read past either buffer: a short buffer compares only what it has.
+        let length = length.min(current.len()).min(baseline.len());
         let level = Level::new();
         dispatch!(level, simd => Self::word_diff_mask_impl(simd, current, baseline, length))
     }
@@ -56,12 +58,16 @@ impl BasisPayloadDiff {
     #[inline(always)]
     fn word_bit(current: &[u8], baseline: &[u8], byte_pos: usize) -> u64 {
         // Endianness is irrelevant: this only ever asks whether the eight bytes are equal.
-        if current[byte_pos..byte_pos + 8] == baseline[byte_pos..byte_pos + 8] { 0 } else { 1u64 << (byte_pos >> 3) }
+        let same = match (current.get(byte_pos..byte_pos + 8), baseline.get(byte_pos..byte_pos + 8)) {
+            (Some(a), Some(b)) => a == b,
+            _ => false,
+        };
+        if same { 0 } else { 1u64 << (byte_pos >> 3) }
     }
 
     fn tail_bit(current: &[u8], baseline: &[u8], byte_pos: usize, length: usize) -> u64 {
         for k in byte_pos..length {
-            if current[k] != baseline[k] {
+            if current.get(k) != baseline.get(k) {
                 return 1u64 << (byte_pos >> 3);
             }
         }

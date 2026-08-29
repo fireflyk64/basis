@@ -32,17 +32,12 @@ impl BasisAvatarDeadband {
         if current.len() != last_sent.len() || (current.len() & 3) != 0 {
             return false;
         }
-        let mut i = 0;
-        while i < current.len() {
-            let dot = f64::from(current[i]) * f64::from(last_sent[i])
-                + f64::from(current[i + 1]) * f64::from(last_sent[i + 1])
-                + f64::from(current[i + 2]) * f64::from(last_sent[i + 2])
-                + f64::from(current[i + 3]) * f64::from(last_sent[i + 3]);
+        for (a, b) in current.as_chunks::<4>().0.iter().zip(last_sent.as_chunks::<4>().0.iter()) {
+            let dot: f64 = a.iter().zip(b).map(|(x, y)| f64::from(*x) * f64::from(*y)).sum();
             // !(>=) rather than (<) so a NaN dot returns false (forces send), matching values_within.
-            if !(dot.abs() >= min_abs_dot) {
+            if dot.is_nan() || dot.abs() < min_abs_dot {
                 return false;
             }
-            i += 4;
         }
         true
     }
@@ -53,8 +48,8 @@ impl BasisAvatarDeadband {
         if current.len() != last_sent.len() {
             return false;
         }
-        for i in 0..current.len() {
-            let d = current[i] - last_sent[i];
+        for (a, b) in current.iter().zip(last_sent) {
+            let d = a - b;
             if !(d <= max_abs_delta && d >= -max_abs_delta) {
                 return false;
             }
