@@ -165,6 +165,24 @@ impl NetworkServer {
         *STATE.auth_identity.write() = identity;
     }
 
+    /// Installs (or clears) the transport shell. Production sets this from `start_server`; tests
+    /// install a stand-in whose peer count they control.
+    pub fn set_server(server: Option<NetManagerRef>) {
+        *STATE.server.write() = server;
+    }
+
+    pub fn set_allow_list(list: Option<Arc<BasisAllowList>>) {
+        *STATE.allow_list.write() = list;
+    }
+
+    pub fn set_ban_list(list: Option<Arc<BasisBanList>>) {
+        *STATE.ban_list.write() = list;
+    }
+
+    pub fn set_high_quality_length(length: usize) {
+        STATE.high_quality_length.store(length, Ordering::Relaxed);
+    }
+
     pub fn high_quality_length() -> usize {
         STATE.high_quality_length.load(Ordering::Relaxed)
     }

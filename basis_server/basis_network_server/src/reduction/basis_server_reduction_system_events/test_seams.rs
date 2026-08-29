@@ -6,7 +6,7 @@ use std::sync::Arc;
 use basis_network_core::BasisNetworkCommons;
 
 use super::distance::DistanceSweepState;
-use super::{BasisServerReductionSystemEvents, now_ticks};
+use super::{BasisServerReductionSystemEvents, S, now_ticks};
 use crate::reduction::{PlayerState, ReceiverData, SenderWork};
 
 impl BasisServerReductionSystemEvents {
@@ -86,6 +86,12 @@ impl BasisServerReductionSystemEvents {
             t.learned_ceiling_tick = 0;
         });
         Self::set_send_workers(workers);
+    }
+
+    /// Registers a player state directly, bypassing the join path, so a test can stage the exact
+    /// tiers and position a subject has.
+    pub fn test_only_insert_player_state(id: i32, state: Arc<PlayerState>) {
+        S.player_states.insert(id, state);
     }
 
     /// The refresh period the sweep would use with `distance`'s solver state: the faster device

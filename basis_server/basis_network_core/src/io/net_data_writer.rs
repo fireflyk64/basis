@@ -273,17 +273,19 @@ impl NetDataWriter {
     }
 
     pub fn put_array_string(&mut self, value: &[String]) -> NetResult<()> {
-        self.put_ushort_count("string array", value.len())?;
-        for s in value {
-            self.put_string(s)?;
-        }
-        Ok(())
+        self.put_array_string_max(value, 0)
     }
 
+    /// A refused entry leaves nothing behind: the count prefix and the entries already written
+    /// are rolled back, so a caller never ships a truncated array under a full count.
     pub fn put_array_string_max(&mut self, value: &[String], str_max_length: usize) -> NetResult<()> {
+        let start = self.position;
         self.put_ushort_count("string array", value.len())?;
         for s in value {
-            self.put_string_max(s, str_max_length)?;
+            if let Err(e) = self.put_string_max(s, str_max_length) {
+                self.position = start;
+                return Err(e);
+            }
         }
         Ok(())
     }

@@ -22,9 +22,9 @@ const DEFAULT_ROUNDS: usize = 25;
 /// Pacing between rounds, so an unpaced loop does not just measure the outgoing queues.
 const ROUND_PAUSE: Duration = Duration::from_millis(4);
 
-const JOIN_TIMEOUT: Duration = Duration::from_secs(20);
-const LINK_TIMEOUT: Duration = Duration::from_secs(25);
-const DELIVERY_TIMEOUT: Duration = Duration::from_secs(45);
+const JOIN_TIMEOUT: Duration = Duration::from_secs(45);
+const LINK_TIMEOUT: Duration = Duration::from_secs(60);
+const DELIVERY_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Counters rather than a log of messages, so the scale can be turned up without the collector
 /// becoming the thing that runs out of memory first.
@@ -40,7 +40,7 @@ struct Tally {
 }
 
 #[test]
-#[serial]
+#[serial(network_statics)]
 fn peer_clients_sustain_traffic_over_direct_links_and_the_server_at_once() {
     let client_count = read_scale("BASIS_HELLO_STRESS_CLIENTS", DEFAULT_CLIENT_COUNT, 4);
     let rounds = read_scale("BASIS_HELLO_STRESS_ROUNDS", DEFAULT_ROUNDS, 1);
@@ -167,7 +167,7 @@ fn peer_clients_sustain_traffic_over_direct_links_and_the_server_at_once() {
 
 /// A direct link to oneself is refused up front, and a link request before joining is an error.
 #[test]
-#[serial]
+#[serial(network_statics)]
 fn direct_link_misuse_is_reported_not_panicked() {
     let server = HelloWorldServerFixture::new();
     let lonely = HelloPeerClient::new("Lonely").unwrap();

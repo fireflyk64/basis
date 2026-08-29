@@ -50,7 +50,7 @@ fn disconnect_all(clients: &[Arc<BasisHelloClient>]) {
 /// the other fifteen — 240 messages across a full mesh. Every client must receive exactly the
 /// fifteen addressed to it, from the right sender, and nothing addressed to anyone else.
 #[test]
-#[serial]
+#[serial(network_statics)]
 fn sixteen_clients_exchange_directed_messages_across_the_full_mesh() {
     let server = HelloWorldServerFixture::new();
     let clients = join_clients(&server, CLIENT_COUNT);
@@ -104,7 +104,7 @@ fn sixteen_clients_exchange_directed_messages_across_the_full_mesh() {
 /// adding 1 and handing it to its neighbour. Sixteen hops means the volley crosses every
 /// client-to-client edge of the ring and comes back to where it started.
 #[test]
-#[serial]
+#[serial(network_statics)]
 fn sixteen_clients_echo_numbers_around_the_ring() {
     let server = HelloWorldServerFixture::new();
     let clients = join_clients(&server, CLIENT_COUNT);
@@ -155,7 +155,7 @@ fn sixteen_clients_echo_numbers_around_the_ring() {
 /// Faults the C# suite left to the transport: a wrong password is refused rather than hung on,
 /// and a client that never joined cannot send.
 #[test]
-#[serial]
+#[serial(network_statics)]
 fn a_wrong_password_is_refused_and_an_unjoined_client_cannot_send() {
     let server = HelloWorldServerFixture::new();
     let client = BasisHelloClient::new("Impostor").unwrap();

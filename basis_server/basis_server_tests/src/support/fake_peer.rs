@@ -4,7 +4,7 @@
 use std::any::Any;
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 
 use basis_network_core::transport::basis_network_shell::{DeliveryMethod, NetPeer, NetPeerRef, SendError};
 use parking_lot::{Mutex, RwLock};
@@ -26,29 +26,48 @@ pub struct FakePeer {
     tag: RwLock<Option<Arc<dyn Any + Send + Sync>>>,
     pub sent: Mutex<Vec<SentPacket>>,
     pub disconnects: AtomicI32,
+    /// The payload attached to each `disconnect_with`, in order (a reject reason, usually).
+    pub disconnect_data: Mutex<Vec<Vec<u8>>>,
     /// When set, every send is refused with this error — the transport saying no.
     pub refuse_sends: Mutex<Option<SendError>>,
 }
 
 impl FakePeer {
     pub fn new(id: i32) -> Arc<Self> {
-        Arc::new(Self {
+        Self::with_address(id, IpAddr::from([127, 0, 0, 1]))
+    }
+
+    pub fn with_address(id: i32, address: IpAddr) -> Arc<Self> {
+        // Every fresh fake is its own connection: two fakes with the same id are two different
+        // peers, the way a recycled slot hands out a new connection under an old id.
+        static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(1);
+        Arc::new(Self::build(id, address, NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed)))
+    }
+
+    fn build(id: i32, address: IpAddr, connection: u64) -> Self {
+        Self {
             id,
             remote_id: AtomicI32::new(id),
-            address: IpAddr::from([127, 0, 0, 1]),
-            identity: 0x7000_0000_0000_0000 | id as u64,
+            address,
+            identity: 0x7000_0000_0000_0000 | (connection << 24) | (id as u64 & 0x00FF_FFFF),
             connected: AtomicBool::new(true),
             tag: RwLock::new(None),
             sent: Mutex::new(Vec::new()),
             disconnects: AtomicI32::new(0),
+            disconnect_data: Mutex::new(Vec::new()),
             refuse_sends: Mutex::new(None),
-        })
+        }
     }
 
-    pub fn with_address(id: i32, address: IpAddr) -> Arc<Self> {
-        let peer = Self::new(id);
-        // SAFETY-free: build a new value with the address set.
-        Arc::new(Self { address, ..Arc::try_unwrap(peer).unwrap_or_else(|_| unreachable!()) })
+    /// A distinct wrapper over the same connection, as a transport hands out on every event: a
+    /// different object that `peers_equal` still reports as the same peer.
+    pub fn wrap(self: &Arc<Self>) -> Arc<Self> {
+        let wrapped = Self::build(self.id, self.address, 0);
+        Arc::new(Self { identity: self.identity, ..wrapped })
+    }
+
+    pub fn disconnect_calls(&self) -> i32 {
+        self.disconnects.load(Ordering::Relaxed)
     }
 
     pub fn as_ref(self: &Arc<Self>) -> NetPeerRef {
@@ -82,7 +101,8 @@ impl NetPeer for FakePeer {
         self.connected.store(false, Ordering::Relaxed);
     }
 
-    fn disconnect_with(&self, _data: &[u8]) {
+    fn disconnect_with(&self, data: &[u8]) {
+        self.disconnect_data.lock().push(data.to_vec());
         self.disconnect();
     }
 

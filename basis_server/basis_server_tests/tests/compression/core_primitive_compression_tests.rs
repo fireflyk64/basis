@@ -12,9 +12,9 @@ type Q = (f32, f32, f32, f32);
 
 // ── Smallest-three quaternion compression ──
 
-const S2: f32 = 0.70710678; // sin/cos 45°
+const S2: f32 = std::f32::consts::FRAC_1_SQRT_2; // sin/cos 45°
 const S225: f32 = 0.38268343; // sin 22.5°
-const C225: f32 = 0.92387953; // cos 22.5°
+const C225: f32 = 0.923_879_5; // cos 22.5°
 const S60: f32 = 0.8660254; // sin 60°
 
 fn normalize(x: f32, y: f32, z: f32, w: f32) -> Q {
@@ -218,6 +218,7 @@ fn rotation_field_offsets_are_contiguous_and_match_rotation_bytes_for_all_qualit
         assert_eq!((total_bits + 7) >> 3, BasisBoneRotationCompression::rotation_bytes(q));
 
         // The explicit bone slots come first, then one field per finger channel.
+        #[allow(clippy::needless_range_loop)]
         for slot in 0..BasisBoneRotationCompression::WIRE_BONE_SLOT_COUNT {
             let expected_width = match BasisBoneRotationCompression::BONE_DOF[slot] {
                 3 => 2 + 3 * BasisBoneRotationCompression::get_bpc_table(q)[slot] as u32,
@@ -307,7 +308,7 @@ fn packet_sizes_are_pinned_wire_compatibility() {
 
 #[test]
 fn ranged_float_round_trips_within_half_precision() {
-    for (min, max, precision) in [(-1.0f32, 1.0f32, 0.001f32), (0.0, 1.0, 0.01), (-3.1415927, 3.1415927, 0.001), (0.0, 10.0, 1.0), (-50.0, 50.0, 0.1)] {
+    for (min, max, precision) in [(-1.0f32, 1.0f32, 0.001f32), (0.0, 1.0, 0.01), (-std::f32::consts::PI, std::f32::consts::PI, 0.001), (0.0, 10.0, 1.0), (-50.0, 50.0, 0.1)] {
         let codec = BasisRangedUshortFloatData::new(min, max, precision);
         let tol = 0.5 * precision + 0.011 * precision;
         for i in 0..=1000 {

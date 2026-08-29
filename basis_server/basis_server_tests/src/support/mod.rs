@@ -3,9 +3,11 @@
 
 pub mod delta_test_support;
 pub mod fake_peer;
+pub mod lifecycle;
 
 pub use delta_test_support::DeltaTestSupport;
 pub use fake_peer::FakePeer;
+pub use lifecycle::{FakeAuth, FakeNetManager, LifecycleSupport, MapAuthIdentity, RecordingConnectionRequest, ServerStaticsScope};
 
 use std::time::{Duration, Instant};
 
