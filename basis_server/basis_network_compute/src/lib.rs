@@ -15,7 +15,7 @@
 use basis_network_core::BasisNetworkCommons;
 use basis_network_core::BasisSimdCapabilities;
 use basis_network_core::compute::{BasisDistanceSolveRequest, IBasisDistanceSolver};
-use fearless_simd::{Level, Simd, SimdBase, SimdFloat, dispatch, f32x8};
+use fearless_simd::{Level, Simd, SimdBase, dispatch, f32x8};
 
 /// The solver backends this build can offer.
 pub struct BasisComputeFactory;

@@ -8,12 +8,14 @@ rust-version.workspace = true
 
 [dependencies]
 basis_network_core = { path = "../basis_network_core" }
+basis_error = { workspace = true, features = ["tokio"] }
 basis_network_compute = { path = "../basis_network_compute" }
 basis_did = { path = "../contrib/did" }
 basis_crypto = { path = "../contrib/crypto" }
 iroh.workspace = true
 iroh-base.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 axum.workspace = true
 hyper.workspace = true
 bytes.workspace = true
@@ -21,14 +23,19 @@ parking_lot.workspace = true
 dashmap.workspace = true
 arc-swap.workspace = true
 crossbeam-channel.workspace = true
+crossbeam-queue.workspace = true
 rayon.workspace = true
+fearless_simd.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 quick-xml.workspace = true
 zstd.workspace = true
 lz4_flex.workspace = true
 half.workspace = true
 uuid.workspace = true
+base64.workspace = true
+unicode-segmentation.workspace = true
 regex.workspace = true
 rand.workspace = true
 thiserror.workspace = true

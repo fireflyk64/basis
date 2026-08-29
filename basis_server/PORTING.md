@@ -92,10 +92,43 @@ API-compatible LiteNetLib-protocol transport planned for the C# clients register
 - [x] core: io, protocol, diagnostics, identity, pooling, math, p2p, encryption, statistics,
       sanitization, compute, compression, serializable, configuration, transport (iroh)
 - [ ] core: tests ported
-- [ ] compute
-- [ ] server
+- [x] compute (host-vectorised solver behind the same `IBasisDistanceSolver` contract)
+- [x] server (`basis_network_server`, every C# file mirrored; see "Server notes" below)
 - [ ] client, hello world (Rust)
 - [ ] console
 - [ ] headless client console, bench agent
 - [ ] iroh FFI + C# hello world clients
 - [ ] server tests, REST API tests
+
+## Server notes
+
+`basis_network_server` mirrors `BasisNetworkServer` file for file (`core/`, `security/`,
+`networking/`, `handlers/`, `messaging/`, `reduction/`, `resources/`, `rest_api/`, `diagnostics/`,
+`p2p/`, `identity/`, `auth/`). Static C# classes are `pub struct X;` with associated functions
+over module statics (`LazyLock` + `DashMap`/`parking_lot`/atomics); partial classes are one
+`impl` block per submodule under `reduction/basis_server_reduction_system_events/`.
+
+Where the transport changed the design, the port keeps the C# shape and documents the swap:
+
+- **Reduction `PlayerState`** is split by writer: `SenderWork` (locked once per inbound frame),
+  `ReceiverData` (locked once per receiver per phase) and an immutable `SenderFrame` published
+  through `ArcSwap`, which the O(N²) send loop reads with no lock. Timing is in microseconds
+  from process start (`now_ticks`, `MS_TO_TICK`).
+- **Parallel.For** is a rayon pool rebuilt when the tuned degree changes; the widening trials,
+  learned ceilings and budget-share controller are ported as-is.
+- **P2P introduction**: LiteNetLib punched NAT holes from its own module; iroh endpoints
+  hole-punch themselves once each side has the other's `EndpointAddr`, so the broker collects
+  the two `IntroduceRequest` halves and sends each peer an `Introduce` (the initiator dials).
+- **Send-socket growth** (SO_REUSEPORT) has no iroh equivalent; the pressure detection stays
+  and warns once, pointing at the kernel buffer sysctls.
+- **Memory reclaim**: no GC to force; the population-drop trigger is kept and the pass calls
+  `malloc_trim` (glibc) and reports the working set. The health endpoint's `gc` block reports
+  RSS and reclaim passes with `"runtime":"rust"`.
+- **Health / REST**: axum on the shared `IrohRuntime`; the REST routes are a pure
+  `dispatch(method, segments, body)` so they test without a socket. Bearer keys compare as
+  SHA-256 digests in constant time.
+- **Logging**: `BasisServerSideLogging` hooks the BNL sinks; a bounded queue and one writer
+  thread batch lines into `logs/yyyy-MM-dd.log`; console lines use ANSI colours.
+- Every fallible path returns `BasisResult`/`Option`; handlers log and drop malformed packets
+  (the message processor counts protocol errors per peer and escalates exactly as the C# did),
+  and a panicking handler is caught and counted rather than allowed to take a thread down.
