@@ -95,7 +95,7 @@ fn float_round_trips_bit_exact() {
 
 #[test]
 fn double_round_trips_bit_exact() {
-    for value in [0f64, 2.718281828459045, -98765.4321, f64::MIN, f64::MAX, f64::EPSILON, f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.0] {
+    for value in [0f64, std::f64::consts::E, -98765.4321, f64::MIN, f64::MAX, f64::EPSILON, f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.0] {
         let mut w = NetDataWriter::new();
         w.put_double(value);
         let mut r = reader_over(&w);

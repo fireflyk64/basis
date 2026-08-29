@@ -465,7 +465,8 @@ fn default_configuration_boots_with_only_worlds_locked() {
 fn every_toggle_flips_its_flag_and_returns_the_new_state() {
     let _u = UnlockOnDrop;
     BasisGlobalLockManager::initialize_from_config(&all_unlocked());
-    let toggles: [(fn() -> bool, fn() -> bool); 17] = [
+    type Toggle = (fn() -> bool, fn() -> bool);
+    let toggles: [Toggle; 17] = [
         (BasisGlobalLockManager::toggle_avatars, BasisGlobalLockManager::avatars_locked),
         (BasisGlobalLockManager::toggle_props, BasisGlobalLockManager::props_locked),
         (BasisGlobalLockManager::toggle_worlds, BasisGlobalLockManager::worlds_locked),

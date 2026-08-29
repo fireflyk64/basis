@@ -1,5 +1,4 @@
 use crate::io::{NetDataReader, NetDataWriter, NetResult};
-use crate::BNL;
 
 use super::identity::PlayerIdMessage;
 use crate::io::net_data_reader::NetDataError;
@@ -68,24 +67,16 @@ pub struct ConsoleData {
 }
 
 impl ConsoleData {
+    /// A payload the buffer cannot hold is a fault: the array is left empty and the error names
+    /// the claimed and available sizes.
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
-        let bytes_available = reader.available_bytes();
-        if bytes_available > 0 {
-            self.message_index = reader.get_byte()?;
-            let payload_size = usize::from(reader.get_ushort()?);
-            if payload_size > 0 {
-                if payload_size > reader.available_bytes() {
-                    BNL::log_error(format!("ConsoleData payload {payload_size} exceeds available data ({} bytes).", reader.available_bytes()));
-                    self.array = Some(Vec::new());
-                    return Ok(());
-                }
-                self.array = Some(reader.get_bytes_vec(payload_size)?);
-            } else {
-                self.array = Some(Vec::new());
-            }
-        } else {
-            BNL::log_error(format!("Unable to read remaining bytes, available: {bytes_available}"));
+        self.message_index = reader.get_byte().map_err(|e| e.for_field("ConsoleData.messageIndex"))?;
+        let payload_size = usize::from(reader.get_ushort().map_err(|e| e.for_field("ConsoleData.payloadSize"))?);
+        if payload_size > reader.available_bytes() {
+            self.array = Some(Vec::new());
+            return Err(NetDataError::length_exceeds_data("ConsoleData.array", payload_size, reader.available_bytes()));
         }
+        self.array = Some(if payload_size > 0 { reader.get_bytes_vec(payload_size)? } else { Vec::new() });
         Ok(())
     }
 

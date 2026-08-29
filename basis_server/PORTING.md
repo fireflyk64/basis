@@ -91,14 +91,69 @@ API-compatible LiteNetLib-protocol transport planned for the C# clients register
 - [x] contrib: crypto, did, handles (+ tests)
 - [x] core: io, protocol, diagnostics, identity, pooling, math, p2p, encryption, statistics,
       sanitization, compute, compression, serializable, configuration, transport (iroh)
-- [ ] core: tests ported
 - [x] compute (host-vectorised solver behind the same `IBasisDistanceSolver` contract)
 - [x] server (`basis_network_server`, every C# file mirrored; see "Server notes" below)
-- [ ] client, hello world (Rust)
-- [ ] console
-- [ ] headless client console, bench agent
-- [ ] iroh FFI + C# hello world clients
-- [ ] server tests, REST API tests
+- [x] client library, Rust hello-world client (`basis_network_client`, `basis_hello_world_client`)
+- [x] console (`basis_server_console`)
+- [x] headless client console (`basis_network_client_console`), bench agent (`basis_bench_agent`)
+- [x] iroh FFI (`basis_iroh_ffi`) + the C# hello-world clients on the `iroh` stack
+- [x] server tests, REST API tests (see "Tests" below)
+
+## Tests
+
+`basis_server_tests/tests/<folder>/` mirrors `BasisServerTests/<Folder>/`, one test binary per
+C# folder and one module per C# file; `basis_rest_api_tests` mirrors `BasisRestApi.Tests`. The
+shared fixtures live in `basis_server_tests/src/support/` (a real server on iroh, a recording
+`FakePeer`, the lifecycle doubles — fake transport, recording connection request, map-backed
+auth identity, `ServerStaticsScope` — and the avatar delta helpers). Tests that touch a
+process-wide static run under a `serial_test` key; everything else runs in parallel.
+
+| C# suite | Rust binary | tests |
+| --- | --- | --- |
+| Avatar (15 files) | `avatar` | 99 |
+| Compression (7 of 12 files) | `compression` | 63 |
+| Compute (2 of 3 files) | `compute` | 10 |
+| Infrastructure (8 files) | `infrastructure` | 192 |
+| Networking (14 files) | `networking` | 343 |
+| Security (6 files) | `security` | 230 |
+| Voice (2 files) | `voice` | 36 |
+| BasisRestApi.Tests (2 files) | `basis_rest_api_tests` | 38 |
+| Contrib (crypto, did, dns) | the contrib crates' `tests/` | 25 |
+
+1034 Rust tests against 1022 C# facts + 34 REST facts. Nothing in the C# tree was deleted; the
+C# suites still run against the C# server, and `HelloWorldPeerStressTests` (C#) now needs the
+Rust server on the `iroh` stack (or `--stack litenetlib` against the C# server).
+
+Not ported, on purpose:
+
+- `Compression/CompactMerge*Tests` — LiteNetLib's merged-packet framing; iroh has no merge step.
+- `Compression/{GpuLz4Experiment, PositionQuantizationExperiment, SimdCodecBenchmark,
+  BundleCompressionExperiment, BundleDictionaryTrainer}` and `Compute/GpuLz4Experiment` —
+  recorded measurements and tooling, not tests.
+- `Voice/VoicePriorityQueueTests.{SaturatedBulkQueue_DoesNotShedVoice,
+  VoiceOnPriorityQueue_ArrivesIntact}` and `Infrastructure/CoreBudgetTests.PeerUpdateSizing…` —
+  they drive LiteNetLib's per-peer unreliable queues; voice rides its own QUIC stream on iroh.
+- Cases that only exist because C# has `null` (null peers, null strings, null arrays) and the
+  non-auto-resize `NetDataWriter` constructor, which the Rust writer does not have.
+- `BasisServerBenchmark` (a tool, not a test) is deferred.
+
+Behavioural differences the port pins deliberately, each with a test:
+
+- Reading a truncated or over-claimed message is an `Err` naming the field and position (the C#
+  logged and carried on with a partial struct); writers refuse a payload that does not fit its
+  length prefix instead of wrapping the count, and roll back a partially written array.
+- A byte-wide player id past 255 is refused rather than truncated to another player.
+- The net-id database reports a per-player cap or an exhausted id space as a `Limit` error
+  (logged once per session), the caller drops the request.
+- Numeric compute-device selectors out of range are refused with an "out of range" message; a
+  padded platform id is not a headless platform; a target without an address formats as empty.
+
+Bugs the port found on the way (all fixed): `encode_avatar_interval_byte` overflowed on extreme
+intervals; the LNL transport sidecar carried no version stamp and was rewritten as "older" on
+every boot; the health endpoint's BSR JSON was missing a brace; `try_apply_delta` overflowed on
+a hostile length; a completed image was offered to the send snapshot rather than to every
+authenticated peer; an undecided iroh connection request was rejected before the handler could
+accept it.
 
 ## Server notes
 

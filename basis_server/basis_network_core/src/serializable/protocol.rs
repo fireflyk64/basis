@@ -30,8 +30,10 @@ impl BytesMessage {
         reader.get_bytes_vec(msg_length).ok()
     }
 
+    /// The length prefix is a ushort; a larger payload is refused rather than written under a
+    /// wrapped count.
     pub fn serialize(&self, writer: &mut NetDataWriter, data: &[u8]) -> NetResult<()> {
-        let length = data.len() as u16;
+        let length = u16::try_from(data.len()).map_err(|_| NetDataError::too_long("bytes message", data.len(), usize::from(u16::MAX)))?;
         if length == 0 {
             BNL::log_error("this data does not belong on the network! was size 0");
         }
@@ -48,11 +50,7 @@ pub struct ErrorMessage {
 
 impl ErrorMessage {
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
-        if reader.available_bytes() >= 2 {
-            self.message = reader.get_string()?;
-        } else {
-            BNL::log_error("Not Enough Data Remains!");
-        }
+        self.message = reader.get_string().map_err(|e| e.for_field("ErrorMessage.message"))?;
         Ok(())
     }
 

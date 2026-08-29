@@ -652,6 +652,7 @@ fn evicting_an_image_tells_its_owner_they_are_providing_it_again() {
 /// wrong place and can decide a picture propped against the joiner is too far away to want.
 #[test]
 #[serial(network_statics)]
+#[allow(clippy::approx_constant)] // the C# test data is 0.7071, a rotation of 90° about Y
 fn an_offer_carries_where_the_image_is_now_not_where_it_was_spawned() {
     let mut f = Fixture::new();
     // Turned as well as moved: the position and the facing travel as one block.

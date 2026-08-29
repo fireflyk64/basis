@@ -1,4 +1,4 @@
-use crate::io::{NetDataReader, NetDataWriter, NetResult};
+use crate::io::{NetDataError, NetDataReader, NetDataWriter, NetResult};
 use crate::BNL;
 
 /// Compact encoding for player identifiers. Deployments use did:key, Steam64, Meta/Oculus
@@ -308,12 +308,7 @@ pub struct NetIDMessage {
 
 impl NetIDMessage {
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
-        let bytes = reader.available_bytes();
-        if bytes != 0 {
-            self.player_id = reader.get_string_max(256)?;
-        } else {
-            BNL::log_error(format!("Unable to read remaining bytes: {bytes}"));
-        }
+        self.player_id = reader.get_string_max(256).map_err(|e| e.for_field("NetIDMessage.playerID"))?;
         Ok(())
     }
 
@@ -373,12 +368,14 @@ impl PlayerIdMessage {
         Ok(())
     }
 
-    /// `large_id`: false = write byte, true = write ushort.
+    /// `large_id`: false = write byte, true = write ushort. A byte-wide write of an id past 255
+    /// is refused rather than truncated to the wrong player.
     pub fn serialize_sized(&self, writer: &mut NetDataWriter, large_id: bool) -> NetResult<()> {
         if large_id {
             writer.put_ushort(self.player_id);
         } else {
-            writer.put_byte(self.player_id as u8);
+            let small = u8::try_from(self.player_id).map_err(|_| NetDataError::too_long("PlayerIdMessage.playerID", usize::from(self.player_id), usize::from(u8::MAX)))?;
+            writer.put_byte(small);
         }
         Ok(())
     }
@@ -517,21 +514,18 @@ pub struct ServerUniqueIDMessages {
 }
 
 impl ServerUniqueIDMessages {
+    /// `messages` is only set once every entry the count promised has been read; a short
+    /// buffer leaves it `None` and reports which entry broke.
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
-        let bytes = reader.available_bytes();
-        if bytes >= 2 {
-            self.message_count = reader.get_ushort()?;
-            let mut messages = Vec::with_capacity(usize::from(self.message_count));
-            for _ in 0..self.message_count {
-                let mut m = ServerNetIDMessage::default();
-                m.deserialize(reader)?;
-                messages.push(m);
-            }
-            self.messages = Some(messages);
-        } else {
-            self.messages = None;
-            BNL::log_error(format!("Unable to read remaining bytes for MessageCount. Available: {bytes}"));
+        self.messages = None;
+        self.message_count = reader.get_ushort().map_err(|e| e.for_field("ServerUniqueIDMessages.MessageCount"))?;
+        let mut messages = Vec::with_capacity(usize::from(self.message_count).min(4096));
+        for _ in 0..self.message_count {
+            let mut m = ServerNetIDMessage::default();
+            m.deserialize(reader)?;
+            messages.push(m);
         }
+        self.messages = Some(messages);
         Ok(())
     }
 
@@ -557,12 +551,7 @@ pub struct UshortUniqueIDMessage {
 
 impl UshortUniqueIDMessage {
     pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
-        let bytes = reader.available_bytes();
-        if bytes != 0 {
-            self.unique_id_ushort = reader.get_ushort()?;
-        } else {
-            BNL::log_error(format!("Unable to read remaining bytes: {bytes}"));
-        }
+        self.unique_id_ushort = reader.get_ushort().map_err(|e| e.for_field("UshortUniqueIDMessage.UniqueIDUshort"))?;
         Ok(())
     }
 
