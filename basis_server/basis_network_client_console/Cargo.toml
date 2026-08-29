@@ -20,3 +20,8 @@ rand.workspace = true
 lz4_flex.workspace = true
 zstd.workspace = true
 half.workspace = true
+basis_error = { path = "../basis_error" }
+dashmap.workspace = true
+arc-swap.workspace = true
+num_cpus.workspace = true
+flate2 = "1"
