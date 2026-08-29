@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<StartupObject>Basis.HelloWorld.Program</StartupObject>
+		<!--
+		  In the solution so it is discoverable and CI compiles it, but out of the released server
+		  zip: CI publishes the whole solution into one directory, and a demo is not part of what an
+		  operator deploys. `dotnet run` is the intended way to use it; publish it deliberately with
+		  -p:IsPublishable=true.
+		-->
+		<IsPublishable>false</IsPublishable>
+	</PropertyGroup>
+
+	<!--
+	  An Exe rather than a library because the demo IS the documentation: `dotnet run` against a
+	  running server is the shortest path from "I cloned this" to "numbers are crossing the wire".
+	  BasisServerTests references the project for BasisHelloClient alone, which a test project may
+	  do with an Exe exactly as with a library.
+	-->
+	<ItemGroup>
+		<ProjectReference Include="..\BasisNetworkClient\BasisNetworkClient.csproj" />
+		<ProjectReference Include="..\BasisNetworkCore\BasisNetworkCore.csproj" />
+		<ProjectReference Include="..\Contrib\Auth\Did\Did.csproj" />
+		<ProjectReference Include="..\Contrib\Crypto\Crypto.csproj" />
+		<ProjectReference Include="..\LiteNetLib\LiteNetLib.csproj" />
+	</ItemGroup>
+
+</Project>

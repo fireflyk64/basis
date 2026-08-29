@@ -18,7 +18,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\BasisNetworkClient\BasisNetworkClient.csproj" />
     <ProjectReference Include="..\BasisNetworkCore\BasisNetworkCore.csproj" />
+    <!-- Referenced for BasisHelloClient, which HelloWorldPeerMessageTests drives against a real server. -->
+    <ProjectReference Include="..\BasisHelloWorldClient\BasisHelloWorldClient.csproj" />
     <ProjectReference Include="..\BasisNetworkServer\BasisNetworkServer.csproj" />
     <!-- Present so the runtime lookup under test has something to find; never referenced in code. -->
     <ProjectReference Include="..\BasisNetworkCompute\BasisNetworkCompute.csproj" />
