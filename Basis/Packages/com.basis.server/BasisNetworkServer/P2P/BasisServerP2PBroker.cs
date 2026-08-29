@@ -66,10 +66,20 @@ namespace BasisNetworkServer
 
         private static LiteNatPunchListener _natListener;
 
+        /// <summary>
+        /// The transport the listener above is installed on.
+        ///
+        /// <para>Guarding on the listener alone was wrong across a restart. StartServer builds a NEW
+        /// NetManager with its own NatPunchModule, so a second Initialize returned early on the
+        /// non-null listener and left that module with no listener at all — every NAT introduce
+        /// request silently dropped, and no pair able to go direct again for the life of the
+        /// process. Keyed on the manager instead, a restart re-arms and a repeat call on the same
+        /// transport is still a no-op.</para>
+        /// </summary>
+        private static LiteNetLib.NetManager _natManager;
+
         public static void Initialize()
         {
-            if (_natListener != null) return;
-
             var manager = (NetworkServer.Server as LNLNetManager)?.manager;
             if (manager == null)
             {
@@ -77,17 +87,37 @@ namespace BasisNetworkServer
                 return;
             }
 
+            if (ReferenceEquals(_natManager, manager)) return;
+
             if (!manager.NatPunchEnabled)
             {
                 BNL.LogWarning("[P2P] NatPunchEnabled=false in server config — direct peer connections will not work. Set NatPunchEnabled=true to enable.");
+            }
+
+            // Sessions and offloads are keyed by peer id, and a restart hands the same ids back out
+            // to entirely different players. A surviving offloaded pair is the dangerous one: the
+            // send loop would skip relaying voice and avatar data between two new peers that have
+            // no direct link at all, and neither of them would ever hear the other.
+            if (_natManager != null)
+            {
+                ResetSessions();
             }
 
             _natListener = new LiteNatPunchListener();
             _natListener.NatIntroductionRequest += OnNatIntroductionRequest;
             manager.NatPunchModule.Init(_natListener);
             manager.NatPunchModule.UnsyncedEvents = true;
+            _natManager = manager;
 
             BNL.Log("[P2P] Broker initialised.");
+        }
+
+        private static void ResetSessions()
+        {
+            _sessions.Clear();
+            _peerSessions.Clear();
+            _offloadedPairs.Clear();
+            Volatile.Write(ref _offloadedPairCount, 0);
         }
 
         public static void HandleP2PMessage(NetPacketReader reader, NetPeer peer)
@@ -443,13 +473,7 @@ namespace BasisNetworkServer
 
         // Clears all broker state so each test starts from a clean slate (the dictionaries are
         // static and otherwise persist across tests in the same run).
-        internal static void ResetForTests()
-        {
-            _sessions.Clear();
-            _peerSessions.Clear();
-            _offloadedPairs.Clear();
-            Volatile.Write(ref _offloadedPairCount, 0);
-        }
+        internal static void ResetForTests() => ResetSessions();
 
         // Registers a session the way HandleRequest would (session record + per-peer tracking),
         // without needing NetPeers. State starts past Awaiting (as it would be after Accept).
