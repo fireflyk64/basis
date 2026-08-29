@@ -48,7 +48,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::{Bytes, BytesMut};
 use dashmap::DashMap;
-use iroh::endpoint::{presets, AckFrequencyConfig, Connection, IdleTimeout, QuicTransportConfig, RecvStream, SendStream, VarInt};
+use iroh::endpoint::{presets, Connection, IdleTimeout, QuicTransportConfig, RecvStream, SendStream, VarInt};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, SecretKey};
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::Notify;
@@ -991,28 +991,8 @@ impl ManagerInner {
         // connection can pin, so they are configurable and default to sane ceilings.
         let send_window = u64::try_from(self.transport_config.send_window_bytes).ok().filter(|v| *v > 0).unwrap_or(8 * 1024 * 1024);
         let receive_window = u32::try_from(self.transport_config.receive_window_bytes).ok().filter(|v| *v > 0).unwrap_or(32 * 1024 * 1024);
-        // How often the *peer* acknowledges what we send it, which is the only lever QUIC gives
-        // us over a cost this workload feels acutely. Every datagram frame is ack-eliciting, so
-        // at the default (acknowledge every second one) a room of 200 peers sends this server
-        // roughly 11k ACK-only packets a second — 28 % of all the packets it handles, for
-        // traffic that is unreliable and whose loss we do not act on. Both ends of every
-        // connection this server talks to are built from this same function (the Rust clients
-        // directly, the C# clients through `basis_iroh_ffi`), so configuring it here configures
-        // the whole conversation.
-        //
-        // The threshold is the packet count a peer may hold before it must acknowledge; the
-        // delay is the time it may hold them. QUIC clamps the effective delay to at most the
-        // greater of the path RTT and 25 ms, so 25 ms is the ceiling on a LAN and the timer,
-        // not the threshold, is what usually fires: about 40 acknowledgements per second per
-        // peer instead of one per two packets. Loss detection for the reliable streams pays up
-        // to that same 25 ms, which is inside this server's tick budget.
-        let mut ack_frequency = AckFrequencyConfig::default();
-        ack_frequency
-            .ack_eliciting_threshold(VarInt::from_u32(10))
-            .max_ack_delay(Some(Duration::from_millis(25)));
         QuicTransportConfig::builder()
             .max_idle_timeout(IdleTimeout::try_from(idle).ok())
-            .ack_frequency_config(Some(ack_frequency))
             .keep_alive_interval(keep_alive)
             .max_concurrent_uni_streams(VarInt::from_u32(4096))
             .datagram_receive_buffer_size(Some(4 * 1024 * 1024))

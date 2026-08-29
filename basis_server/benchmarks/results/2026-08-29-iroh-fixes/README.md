@@ -166,3 +166,11 @@ on **baseline** arms and on two *different* baseline builds (item-1-only, then i
 does not track any change made here. The profile's `/proc/net/snmp` series shows this box's
 clamped 416 KB socket buffers dropping packets during iroh join storms, which is the likely
 cause and is item 4's territory. Worth watching on a host with writable `rmem_max`.
+
+## Item 2, backed out
+
+Kept for one commit, then removed on the grounds that it bought nothing measurable here and the
+transport is better off simple. The measurement above stands, and so does the reason it came to
+nothing: noq clamps `max_ack_delay` to max(RTT, 25 ms), which is why neither this attempt nor
+the earlier one moved anything on a loopback rig. If the lever is ever worth revisiting it
+should be on a real-RTT path, where the clamp lifts and the threshold binds.
