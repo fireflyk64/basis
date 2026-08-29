@@ -37,7 +37,7 @@ pub struct DistanceSweepState {
 impl BasisServerReductionSystemEvents {
     /// The refresh period actually in force this tick: the device period while a backend is
     /// carrying the sweep, the CPU period otherwise.
-    fn effective_distance_interval_ticks(distance: &DistanceSweepState) -> i32 {
+    pub(super) fn effective_distance_interval_ticks(distance: &DistanceSweepState) -> i32 {
         if distance.distance_solver.is_some() { Self::compute_distance_update_interval_ticks() } else { Self::distance_update_interval_ticks() }
     }
 

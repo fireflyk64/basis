@@ -64,7 +64,7 @@ fn peer_clients_sustain_traffic_over_direct_links_and_the_server_at_once() {
     // Partner = the other half of an adjacent pair; across = a peer we deliberately never link
     // to, so its traffic has to go through the server; fallback = a third peer, also unlinked,
     // used to prove a "direct" send still lands when there is no link.
-    let partner = move |i: usize| if i % 2 == 0 { i + 1 } else { i - 1 };
+    let partner = move |i: usize| if i.is_multiple_of(2) { i + 1 } else { i - 1 };
     let across = move |i: usize| (i + client_count / 2) % client_count;
     let fallback_target = move |i: usize| (i + 3) % client_count;
 

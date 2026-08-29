@@ -1146,7 +1146,11 @@ impl BasisServerHandleEvents {
         }
         // Returns a message with the ushort back to the client, or sends it to everyone if new.
         if let Err(e) = BasisNetworkIDDatabase::add_or_find_network_id(peer, &message.player_id) {
-            BNL::log_error(format!("NetID assignment for '{}' failed: {e}", message.player_id));
+            // A limit refusal is already logged once per session by the database; logging it per
+            // message would hand a capped client a log storm.
+            if e.code() != ErrorCode::Limit {
+                BNL::log_error(format!("NetID assignment for '{}' failed: {}", message.player_id, e.report()));
+            }
         }
     }
 

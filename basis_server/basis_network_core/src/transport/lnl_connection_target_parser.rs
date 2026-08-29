@@ -89,6 +89,9 @@ impl IConnectionTargetParser for LNLConnectionTargetParser {
 
     fn format(&self, target: &ConnectionTarget) -> String {
         let address = target.get(ConnectionTargetKeys::ADDRESS).unwrap_or_default();
+        if address.is_empty() {
+            return String::new();
+        }
         let port_string = target.get(ConnectionTargetKeys::PORT).unwrap_or_else(|| Self::DEFAULT_PORT.to_string());
         let password = target.get(ConnectionTargetKeys::PASSWORD).unwrap_or_default();
         let is_ipv6 = matches!(address.parse::<IpAddr>(), Ok(IpAddr::V6(_)));

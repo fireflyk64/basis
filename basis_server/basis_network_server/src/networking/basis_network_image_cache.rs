@@ -527,7 +527,10 @@ impl BasisNetworkImageCache {
         let Some(manager_net_id) = Self::manager_net_id() else {
             return;
         };
-        for peer in NetworkServer::peer_snapshot().iter() {
+        // Everyone authenticated, not just the send snapshot: a player who has joined but not yet
+        // been folded into the snapshot is exactly the one that missed the sharer's own send.
+        let room: Vec<NetPeerRef> = NetworkServer::authenticated_peers().iter().map(|p| p.value().clone()).collect();
+        for peer in &room {
             let Ok(recipient) = u16::try_from(peer.id()) else {
                 continue;
             };

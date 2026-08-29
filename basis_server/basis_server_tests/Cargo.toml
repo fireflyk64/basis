@@ -16,6 +16,7 @@ basis_did = { path = "../contrib/did" }
 basis_crypto = { path = "../contrib/crypto" }
 iroh.workspace = true
 tokio.workspace = true
+uuid.workspace = true
 bytes.workspace = true
 parking_lot.workspace = true
 rand.workspace = true

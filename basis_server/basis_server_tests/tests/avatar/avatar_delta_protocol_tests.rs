@@ -13,7 +13,7 @@ use basis_server_tests::support::delta_test_support::TestRng;
 
 enum Frame {
     Key { q: usize, seq: u8, payload: Vec<u8>, true_gen: i64 },
-    Delta { q: usize, seq: u8, base_seq: u8, body: Vec<u8>, true_gen: i64 },
+    Delta { q: usize, #[allow(dead_code)] seq: u8, base_seq: u8, body: Vec<u8>, true_gen: i64 },
 }
 
 #[derive(Debug)]

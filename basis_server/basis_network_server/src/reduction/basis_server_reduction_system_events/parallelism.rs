@@ -127,7 +127,7 @@ impl BasisServerReductionSystemEvents {
     }
 
     /// Width the next send pass wants, from what the last ones cost.
-    fn degree_for(t: &PoolTuning, player_count: i32, mut current: i32) -> i32 {
+    pub(super) fn degree_for(t: &PoolTuning, player_count: i32, mut current: i32) -> i32 {
         let cores = Self::cores();
         if t.configured_degree > 0 {
             return t.configured_degree.min(cores).max(1);

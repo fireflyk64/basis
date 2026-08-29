@@ -47,7 +47,7 @@ impl BasisNetworkCommons {
     pub const AVATAR_INTERVAL_EXTENDED_STEP_MS: i32 = 12;
 
     pub fn encode_avatar_interval_byte(interval_ms: i32, base_interval_ms: i32) -> u8 {
-        let rel = interval_ms - base_interval_ms;
+        let rel = interval_ms.saturating_sub(base_interval_ms);
         if rel <= 0 {
             return 0;
         }

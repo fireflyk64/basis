@@ -8,6 +8,8 @@ use crate::basis_xml_config;
 
 basis_xml_config! {
     pub struct LNLTransportConfig ("LNLTransportConfig", LNLTransportConfig::CURRENT_CONFIG_VERSION) {
+        /// Schema version stamped into the file; 0 = pre-versioning, upgraded on load.
+        pub config_version: i32 = 0 => "ConfigVersion" [Int],
         pub use_native_sockets: bool = true => "UseNativeSockets" [Bool],
         pub nat_punch_enabled: bool = true => "NatPunchEnabled" [Bool],
         pub nat_port_prediction_range: i32 = 32 => "NatPortPredictionRange" [Int],

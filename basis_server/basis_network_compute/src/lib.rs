@@ -31,7 +31,12 @@ impl BasisComputeFactory {
             return Err(format!("base interval {base_interval_ms} ms is not positive"));
         }
         let selector = device_selector.trim();
-        if !selector.is_empty() && selector != "0" && !Self::CPU_SIMD_BACKEND.eq_ignore_ascii_case(selector) && !"cpu".eq_ignore_ascii_case(selector) {
+        if let Ok(index) = selector.parse::<usize>() {
+            // Only one device is enumerated; any other index names nothing rather than falling back.
+            if index != 0 {
+                return Err(format!("compute device index {index} is out of range; available: {}", Self::describe_devices().unwrap_or_default().trim()));
+            }
+        } else if !selector.is_empty() && !Self::CPU_SIMD_BACKEND.eq_ignore_ascii_case(selector) && !"cpu".eq_ignore_ascii_case(selector) {
             return Err(format!("no compute device matches '{selector}'; available: {}", Self::describe_devices().unwrap_or_default().trim()));
         }
         if !BasisSimdCapabilities::hardware_accelerated() {

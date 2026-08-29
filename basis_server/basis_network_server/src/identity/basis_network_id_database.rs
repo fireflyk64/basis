@@ -3,7 +3,7 @@
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
-use basis_error::{BasisResult, ResultExt};
+use basis_error::{BasisError, BasisResult, ErrorCode, ResultExt};
 use basis_network_core::BNL;
 use basis_network_core::SerializableBasis::{NetIDMessage, ServerNetIDMessage, UshortUniqueIDMessage};
 use basis_network_core::{BasisNetworkCommons, DeliveryMethod, NetPeerRef};
@@ -72,13 +72,18 @@ impl BasisNetworkIDDatabase {
         let per_peer_cap = Self::resolve_max_ids_per_player();
         let assigned = PER_PEER_ASSIGNED_COUNT.get(&net_peer.id()).map(|c| *c).unwrap_or(0);
         if assigned >= per_peer_cap {
+            // Logged once per session; the error itself is raised for every refused request so
+            // the caller can see the refusal without a log line per client message.
             if PER_PEER_CAP_WARNED.insert(net_peer.id(), ()).is_none() {
                 BNL::log_error(format!(
                     "Peer {} reached the per-player network-id limit ({per_peer_cap}); dropping registration for {unique_string_id} and further ids this session.",
                     net_peer.id()
                 ));
             }
-            return Ok(());
+            return Err(BasisError::permanent(
+                ErrorCode::Limit,
+                format!("peer {} is at its per-player network-id limit ({per_peer_cap}); '{unique_string_id}' was not registered", net_peer.id()),
+            ));
         }
 
         BNL::log(format!("No existing ID found for {unique_string_id}. Assigning a new ID."));
@@ -87,16 +92,16 @@ impl BasisNetworkIDDatabase {
         let new_counter = COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
         let Ok(new_id) = u16::try_from(new_counter) else {
             COUNTER.fetch_sub(1, Ordering::SeqCst); // Roll back
-            // Log-and-drop, never throw: ids arrive per client message, so at the ceiling an error
-            // per request became an exception storm through the message processor. The requester
-            // simply gets no assignment.
+            // Logged once: ids arrive per client message, so a log line per request at the
+            // ceiling was a storm through the message processor. The refusal itself is still an
+            // error the caller sees; the requester simply gets no assignment.
             if !EXHAUSTED_LOGGED.swap(true, Ordering::SeqCst) {
                 BNL::log_error(format!(
                     "NetID space exhausted ({} ids assigned since the server was last empty); dropping request for {unique_string_id}.",
                     u16::MAX
                 ));
             }
-            return Ok(());
+            return Err(BasisError::permanent(ErrorCode::Limit, format!("the network-id space is exhausted; '{unique_string_id}' was not registered")));
         };
 
         USHORT_NETWORK_DATABASE.insert(unique_string_id.to_string(), new_id);

@@ -88,6 +88,17 @@ impl BasisServerReductionSystemEvents {
         Self::set_send_workers(workers);
     }
 
+    /// The refresh period the sweep would use with `distance`'s solver state: the faster device
+    /// schedule only while a device is actually carrying the sweep.
+    pub fn test_only_effective_distance_interval_ticks(distance: &DistanceSweepState) -> i32 {
+        Self::effective_distance_interval_ticks(distance)
+    }
+
+    /// The send pool width the sizing would pick for `player_count` players from `current`.
+    pub fn test_only_degree_for(player_count: i32, current: i32) -> i32 {
+        Self::with_pool_tuning(|t| Self::degree_for(t, player_count, current))
+    }
+
     /// Runs one full CPU distance sweep over `roster`, writing every receiver's tracking cache.
     pub fn test_only_run_distance_sweep(roster: &[(i32, Arc<PlayerState>)]) {
         let mut distance = DistanceSweepState::default();

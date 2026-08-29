@@ -11,6 +11,9 @@ use basis_hello_world_client::BasisHelloClient;
 use basis_server_tests::support::{HelloWorldServerFixture, wait_until};
 use serial_test::serial;
 
+/// Every (sender id, text) a client received, in arrival order.
+type Inbox = Arc<Mutex<Vec<(u16, String)>>>;
+
 const CLIENT_COUNT: usize = 16;
 const JOIN_TIMEOUT: Duration = Duration::from_secs(20);
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -52,7 +55,7 @@ fn sixteen_clients_exchange_directed_messages_across_the_full_mesh() {
     let server = HelloWorldServerFixture::new();
     let clients = join_clients(&server, CLIENT_COUNT);
 
-    let inbox: Vec<Arc<Mutex<Vec<(u16, String)>>>> = (0..CLIENT_COUNT).map(|_| Arc::new(Mutex::new(Vec::new()))).collect();
+    let inbox: Vec<Inbox> = (0..CLIENT_COUNT).map(|_| Arc::new(Mutex::new(Vec::new()))).collect();
     for (i, client) in clients.iter().enumerate() {
         let bag = inbox[i].clone();
         client.on_text_received(Arc::new(move |sender, text, _| bag.lock().unwrap().push((sender, text))));
@@ -77,16 +80,16 @@ fn sixteen_clients_exchange_directed_messages_across_the_full_mesh() {
         },
     );
 
-    for to in 0..CLIENT_COUNT {
-        let received = inbox[to].lock().unwrap().clone();
+    for (to, bag) in inbox.iter().enumerate() {
+        let received = bag.lock().unwrap().clone();
         // Exactly fifteen: an extra would mean the server relayed a message to someone it was
         // not addressed to, which is the failure that matters most here.
         assert_eq!(received.len(), CLIENT_COUNT - 1, "client {to} received {:?}", received);
-        for from in 0..CLIENT_COUNT {
+        for (from, sender) in clients.iter().enumerate() {
             if from == to {
                 continue;
             }
-            let expected = (clients[from].player_id(), message_for(from, to));
+            let expected = (sender.player_id(), message_for(from, to));
             assert!(received.contains(&expected), "client {to} did not get {expected:?}");
         }
     }
