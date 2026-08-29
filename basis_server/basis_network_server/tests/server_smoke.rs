@@ -9,14 +9,7 @@ use serial_test::serial;
 use tokio_util::sync::CancellationToken;
 
 fn test_configuration() -> Configuration {
-    let mut configuration = Configuration {
-        has_file_support: false,
-        set_port: 0,
-        enable_console: false,
-        api_enabled: false,
-        ..Configuration::default()
-    };
-    configuration
+    Configuration { has_file_support: false, set_port: 0, enable_console: false, api_enabled: false, ..Configuration::default() }
 }
 
 #[test]
