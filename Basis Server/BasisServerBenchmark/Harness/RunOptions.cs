@@ -66,6 +66,37 @@ public sealed class RunOptions
 
     public string HealthUrl => $"http://{HealthHost}:{HealthPort}{HealthPath}";
 
+    /// <summary>
+    /// Two-core mode: the server is pinned to CPU 0 and every load client to CPU 1.
+    ///
+    /// <para>On a box with only two cores the server and the crowd otherwise time-slice one
+    /// another, and a server's CPU figure is then mostly a measure of how often the scheduler
+    /// happened to prefer it. Pinning gives each side exactly one core so two servers measured
+    /// back to back see the same machine. The absolute numbers are small and say nothing about
+    /// a real host; the <em>ratio</em> between two servers under identical pinning is what this
+    /// mode is for.</para>
+    /// </summary>
+    public bool TwoCore { get; init; }
+
+    /// <summary>
+    /// Directory holding the Rust load client (<c>basis_network_client_console</c>), which speaks
+    /// the iroh stack. Null means the whole crowd is the LiteNetLib load client.
+    /// </summary>
+    public string? ModernClientDirectory { get; init; }
+
+    /// <summary>
+    /// Share of the crowd that joins as legacy LiteNetLib clients, 0..1. The rest join over iroh
+    /// through <see cref="ModernClientDirectory"/>. 1 (the default) is the all-legacy crowd every
+    /// existing deployment has today.
+    /// </summary>
+    public double LegacyFraction { get; init; } = 1.0;
+
+    /// <summary>How many of <see cref="Players"/> join as legacy clients.</summary>
+    public int LegacyPlayers => ModernClientDirectory == null ? Players : (int)Math.Round(Players * Math.Clamp(LegacyFraction, 0, 1));
+
+    /// <summary>How many join over iroh.</summary>
+    public int ModernPlayers => Players - LegacyPlayers;
+
     /// <summary>Total wall time this run will take if nothing goes wrong.</summary>
     public TimeSpan EstimatedDuration =>
         TimeSpan.FromSeconds(20) +                       // server boot

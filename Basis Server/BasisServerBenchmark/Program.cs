@@ -20,6 +20,7 @@ public static class Program
         if (!AttachAgent(console, session, startup)) return 1;
 
         Register(console, session, startup);
+        ApplyStartupSettings(console, session, startup);
 
         console.Write(Banner(session));
 
@@ -47,6 +48,19 @@ public static class Program
 
         console.Loop();
         return 0;
+    }
+
+    /// <summary>Command-line settings that are really /set commands, applied before the prompt opens.</summary>
+    private static void ApplyStartupSettings(BenchmarkConsole console, BenchmarkSession session, Startup startup)
+    {
+        if (startup.TwoCore) Apply("two-core", "on");
+        if (startup.ModernClientDirectory != null) Apply("modern-client", startup.ModernClientDirectory);
+        if (startup.LegacyFraction != null) Apply("mix", startup.LegacyFraction);
+        void Apply(string name, string value)
+        {
+            session.Settings.TrySet(name, value, out string message);
+            console.Write("  " + message);
+        }
     }
 
     /// <summary>
@@ -326,6 +340,15 @@ internal sealed class Startup
     /// </summary>
     public string ServerHost { get; private set; } = "";
 
+    /// <summary>--two-core: pin the server and the crowd to separate cores.</summary>
+    public bool TwoCore { get; private set; }
+
+    /// <summary>--modern-client: the Rust (iroh) load client's directory, for a mixed crowd.</summary>
+    public string? ModernClientDirectory { get; private set; }
+
+    /// <summary>--mix: the legacy share of a mixed crowd, as typed.</summary>
+    public string? LegacyFraction { get; private set; }
+
     public static Startup Parse(string[] args)
     {
         var startup = new Startup();
@@ -346,6 +369,9 @@ internal sealed class Startup
                     if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
                         startup.AutoModeArgument = args[++i];
                     break;
+                case "--two-core": startup.TwoCore = true; break;
+                case "--modern-client": startup.ModernClientDirectory = Next(); break;
+                case "--mix": startup.LegacyFraction = Next(); break;
                 case "--help" or "-h": startup.ShowHelp = true; break;
             }
         }
@@ -397,6 +423,17 @@ binary, and everything else is a console command. Type /help once it opens.
   --out <dir>      Where reports are written. Default ./benchmark-results
   --auto           Run /auto, /report and /write without a prompt, then exit. For systemd,
                    nohup and CI, where there is no terminal to type into.
+  --two-core       Pin the server to core 0 and the crowd to core 1, with short timings. For
+                   comparing two servers on a two-core box: the ratio is meaningful, the
+                   absolute figures describe one core.
+  --modern-client <dir>  Directory holding basis_network_client_console, the Rust load client
+                   that joins over iroh. With --mix this seats a mixed crowd.
+  --mix <0..1>     Share of the crowd that joins as legacy LiteNetLib clients; the rest join
+                   over iroh through --modern-client. Needs a server with an iroh listener.
+
+The server directory may hold the Rust server instead: a copy of basis_network_console named
+BasisNetworkConsole. Both servers serve the same /health document, so the same measurement
+runs against either.
 
 Before the first run, start the server and the load client once each by hand so both write their
 default config files - a server's first boot runs an interactive wizard this cannot answer.

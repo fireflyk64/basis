@@ -38,6 +38,47 @@ public interface ILoadClientDriver : IDisposable
     void Stop();
 }
 
+/// <summary>
+/// Pins a process to one core for two-core mode.
+///
+/// <para>Through <c>taskset</c> rather than <see cref="Process.ProcessorAffinity"/>: on Linux the
+/// latter changes the main thread only, and both servers have spawned their worker threads long
+/// before the harness gets a turn. <c>taskset</c> sets the mask before the exec, so every thread
+/// the process will ever start inherits it. Without taskset (or off Linux) the request is
+/// ignored and said so, rather than silently measuring an unpinned run as a pinned one.</para>
+/// </summary>
+public static class CorePinning
+{
+    public static bool Available => OperatingSystem.IsLinux() && File.Exists("/usr/bin/taskset");
+
+    /// <summary>Wraps a start info so the process runs on <paramref name="core"/> alone.</summary>
+    public static ProcessStartInfo Pinned(ProcessStartInfo info, int core)
+    {
+        if (!Available)
+        {
+            Console.Error.WriteLine($"  ! two-core mode asked to pin {Path.GetFileName(info.FileName)} to core {core}, but taskset is not available here; running unpinned.");
+            return info;
+        }
+        var pinned = new ProcessStartInfo("/usr/bin/taskset")
+        {
+            WorkingDirectory = info.WorkingDirectory,
+            UseShellExecute = false,
+            RedirectStandardInput = info.RedirectStandardInput,
+            RedirectStandardOutput = info.RedirectStandardOutput,
+            RedirectStandardError = info.RedirectStandardError,
+        };
+        pinned.ArgumentList.Add("-c");
+        pinned.ArgumentList.Add(core.ToString(CultureInfo.InvariantCulture));
+        pinned.ArgumentList.Add(info.FileName);
+        foreach (string argument in info.ArgumentList) pinned.ArgumentList.Add(argument);
+        foreach (System.Collections.Generic.KeyValuePair<string, string?> variable in info.Environment) pinned.Environment[variable.Key] = variable.Value;
+        return pinned;
+    }
+
+    public const int ServerCore = 0;
+    public const int ClientCore = 1;
+}
+
 /// <summary>Spawns the load client as a child process on this machine.</summary>
 public sealed class LocalLoadClientDriver : ILoadClientDriver
 {
@@ -66,6 +107,7 @@ public sealed class LocalLoadClientDriver : ILoadClientDriver
             // Open only so the client can be asked to leave the server before it is killed.
             RedirectStandardInput = true,
         };
+        if (options.TwoCore) info = CorePinning.Pinned(info, CorePinning.ClientCore);
 
         Process process = Process.Start(info) ?? throw new InvalidOperationException($"Could not start {exe}");
         process.OutputDataReceived += (_, e) =>
@@ -170,6 +212,216 @@ public sealed class LocalLoadClientDriver : ILoadClientDriver
         string temp = path + ".benchtmp";
         doc.Save(temp);
         File.Move(temp, path, overwrite: true);
+    }
+}
+
+/// <summary>
+/// Spawns the Rust load client (<c>basis_network_client_console</c>), whose crowd joins over
+/// iroh. It reads the same <c>ClientSimConfig.xml</c> as the C# client; the one difference is
+/// that its host is the server's iroh connection string, which the harness learns from the
+/// health endpoint once the server is up.
+/// </summary>
+public sealed class RustLoadClientDriver : ILoadClientDriver
+{
+    private static readonly Regex VoiceLine =
+        new(@"\[VOICE\] delivered ([0-9]+(?:\.[0-9]+)?)%", RegexOptions.Compiled);
+
+    private readonly string _directory;
+    private Process? _process;
+    private ProcessCpu? _cpu;
+    private double _voice = -1;
+
+    public RustLoadClientDriver(string directory)
+    {
+        _directory = directory;
+    }
+
+    public string Where => "this machine (loopback, iroh)";
+    public bool IsRemote => false;
+    public double VoiceDelivered => Volatile.Read(ref _voice);
+
+    public void Start(RunOptions options)
+    {
+        HealthSample? health = HealthPoller.TryRead(options.HealthUrl);
+        string target = health?.IrohConnectionString ?? "";
+        if (target.Length == 0)
+            throw new InvalidOperationException(
+                "the server's health endpoint does not name an iroh listener, so an iroh crowd cannot find it. " +
+                "Only the Rust server on the 'mixed' or 'iroh' stack reports one.");
+
+        WriteConfig(options, target);
+
+        string exe = LaunchTarget.Resolve(_directory, "basis_network_client_console");
+        var info = new ProcessStartInfo(exe)
+        {
+            WorkingDirectory = _directory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+        };
+        if (options.TwoCore) info = CorePinning.Pinned(info, CorePinning.ClientCore);
+
+        Process process = Process.Start(info) ?? throw new InvalidOperationException($"Could not start {exe}");
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data == null) return;
+            Match m = VoiceLine.Match(e.Data);
+            if (m.Success && double.TryParse(m.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double pct))
+                Volatile.Write(ref _voice, pct / 100.0);
+        };
+        process.ErrorDataReceived += (_, _) => { };
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        _process = process;
+        _cpu = new ProcessCpu(process);
+    }
+
+    public double SampleCores() => _cpu?.SampleCores() ?? double.NaN;
+
+    public void Stop()
+    {
+        Process? process = _process;
+        _process = null;
+        _cpu = null;
+        if (process == null) return;
+        try
+        {
+            bool stopped = false;
+            try
+            {
+                process.StandardInput.WriteLine("stop");
+                process.StandardInput.Flush();
+                stopped = process.WaitForExit(10000);
+            }
+            catch { /* fall through to the kill */ }
+            if (!stopped && !process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(15000);
+            }
+        }
+        catch { /* already gone */ }
+        finally { try { process.Dispose(); } catch { } }
+    }
+
+    public void Dispose() => Stop();
+
+    private void WriteConfig(RunOptions options, string target)
+    {
+        string path = Path.Combine(_directory, "ClientSimConfig.xml");
+        if (!File.Exists(path))
+            throw new FileNotFoundException(
+                $"Rust load client config not found at {path}. Run basis_network_client_console once so it writes its defaults.", path);
+
+        XDocument doc = XDocument.Load(path, LoadOptions.PreserveWhitespace);
+        XElement root = doc.Root ?? throw new InvalidDataException($"{path} has no root element.");
+        void Set(string name, string value)
+        {
+            XElement? element = root.Elements().FirstOrDefault(e => e.Name.LocalName == name);
+            if (element != null) element.Value = value;
+            else root.Add(new XElement(name, value));
+        }
+        Set("Ip", target);
+        Set("ClientCount", options.Players.ToString(CultureInfo.InvariantCulture));
+        Set("SimulateVoice", "true");
+        if (options.ClientConnectIntervalMs is { } interval)
+            Set("ClientConnectIntervalMs", interval.ToString(CultureInfo.InvariantCulture));
+        string temp = path + ".benchtmp";
+        doc.Save(temp);
+        File.Move(temp, path, overwrite: true);
+    }
+}
+
+/// <summary>
+/// A mixed crowd: <see cref="RunOptions.LegacyPlayers"/> through the LiteNetLib load client and
+/// <see cref="RunOptions.ModernPlayers"/> through the Rust one, on the same server at once.
+///
+/// <para>The rest of the harness sees one driver: the population it waits for is the sum, the
+/// client CPU is the sum, and the voice figure is the population-weighted mean of the two
+/// crowds — each is measured at its own receivers, and a run where one crowd hears everything
+/// while the other hears nothing should read as half heard, not as fine.</para>
+/// </summary>
+public sealed class CompositeLoadClientDriver : ILoadClientDriver
+{
+    private readonly ILoadClientDriver _legacy;
+    private readonly ILoadClientDriver _modern;
+    private int _legacyPlayers;
+    private int _modernPlayers;
+
+    public CompositeLoadClientDriver(ILoadClientDriver legacy, ILoadClientDriver modern)
+    {
+        _legacy = legacy;
+        _modern = modern;
+    }
+
+    public string Where => $"this machine (loopback): {_legacyPlayers} legacy (LiteNetLib) + {_modernPlayers} modern (iroh)";
+    public bool IsRemote => false;
+
+    public double VoiceDelivered
+    {
+        get
+        {
+            double legacy = _legacy.VoiceDelivered;
+            double modern = _modern.VoiceDelivered;
+            int total = _legacyPlayers + _modernPlayers;
+            if (total == 0) return -1;
+            if (legacy < 0 && modern < 0) return -1;
+            if (legacy < 0) return modern;
+            if (modern < 0) return legacy;
+            return (legacy * _legacyPlayers + modern * _modernPlayers) / total;
+        }
+    }
+
+    public void Start(RunOptions options)
+    {
+        _legacyPlayers = options.LegacyPlayers;
+        _modernPlayers = options.ModernPlayers;
+        if (_legacyPlayers > 0) _legacy.Start(Split(options, _legacyPlayers));
+        if (_modernPlayers > 0) _modern.Start(Split(options, _modernPlayers));
+    }
+
+    /// <summary>The same run, for one crowd's share of it.</summary>
+    private static RunOptions Split(RunOptions o, int players) => new()
+    {
+        ServerDirectory = o.ServerDirectory,
+        LoadClientDirectory = o.LoadClientDirectory,
+        Players = players,
+        Warmup = o.Warmup,
+        WindowLength = o.WindowLength,
+        Windows = o.Windows,
+        ConnectTimeout = o.ConnectTimeout,
+        Settings = o.Settings,
+        HealthHost = o.HealthHost,
+        HealthPort = o.HealthPort,
+        HealthPath = o.HealthPath,
+        Label = o.Label,
+        ClientConnectIntervalMs = o.ClientConnectIntervalMs,
+        ServerPort = o.ServerPort,
+        TwoCore = o.TwoCore,
+        // Each half is one plain crowd; the split is not repeated below this level.
+        ModernClientDirectory = null,
+        LegacyFraction = 1.0,
+    };
+
+    public double SampleCores()
+    {
+        double legacy = _legacyPlayers > 0 ? _legacy.SampleCores() : 0;
+        double modern = _modernPlayers > 0 ? _modern.SampleCores() : 0;
+        if (double.IsNaN(legacy) && double.IsNaN(modern)) return double.NaN;
+        return (double.IsNaN(legacy) ? 0 : legacy) + (double.IsNaN(modern) ? 0 : modern);
+    }
+
+    public void Stop()
+    {
+        _legacy.Stop();
+        _modern.Stop();
+    }
+
+    public void Dispose()
+    {
+        _legacy.Dispose();
+        _modern.Dispose();
     }
 }
 

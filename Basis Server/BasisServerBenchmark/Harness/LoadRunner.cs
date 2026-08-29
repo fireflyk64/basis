@@ -83,7 +83,7 @@ public sealed class LoadRunner
     public RunResult Run(RunOptions options, CancellationToken cancel)
     {
         Process? server = null;
-        ILoadClientDriver driver = options.Driver ?? new LocalLoadClientDriver();
+        ILoadClientDriver driver = options.Driver ?? CreateLocalDriver(options);
         bool ownsDriver = options.Driver == null;
         int peakConnected = 0;
         var windows = new List<MeasurementWindow>();
@@ -109,7 +109,9 @@ public sealed class LoadRunner
             if (!WaitForHealth(options, server, TimeSpan.FromSeconds(60), cancel, out string startupFailure))
                 return Failed(options, startupFailure, peakConnected, driver.VoiceDelivered, windows);
 
-            _log($"  [{options.Label}] starting {options.RequestedPlayersLabel()} load clients on {driver.Where}...");
+            _log($"  [{options.Label}] starting {options.RequestedPlayersLabel()} load clients on {driver.Where}" +
+                 (options.ModernClientDirectory != null ? $" ({options.LegacyPlayers} legacy + {options.ModernPlayers} iroh)" : "") +
+                 (options.TwoCore ? " [two-core: server on core 0, crowd on core 1]" : "") + "...");
             driver.Start(options);
 
             if (!WaitForPopulation(options, ref peakConnected, cancel))
@@ -293,6 +295,18 @@ public sealed class LoadRunner
         _configs.Apply(harness);
     }
 
+    /// <summary>
+    /// The crowd for a local run: the LiteNetLib load client alone, or — when a modern client
+    /// directory is set and the legacy share is below one — that plus the Rust (iroh) load
+    /// client, seated together.
+    /// </summary>
+    private static ILoadClientDriver CreateLocalDriver(RunOptions options)
+    {
+        if (options.ModernClientDirectory != null && options.ModernPlayers > 0)
+            return new CompositeLoadClientDriver(new LocalLoadClientDriver(), new RustLoadClientDriver(options.ModernClientDirectory));
+        return new LocalLoadClientDriver();
+    }
+
     private Process StartServer(RunOptions options)
     {
         string exe = ExecutablePath(options.ServerDirectory, "BasisNetworkConsole");
@@ -304,6 +318,7 @@ public sealed class LoadRunner
             RedirectStandardError = true,
             RedirectStandardInput = true,
         };
+        if (options.TwoCore) info = CorePinning.Pinned(info, CorePinning.ServerCore);
 
         Process p = Process.Start(info) ?? throw new InvalidOperationException($"Could not start {exe}");
         // Drained but discarded: an unread pipe fills its buffer and blocks the server mid-write,

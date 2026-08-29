@@ -1,0 +1,50 @@
+  two-core = on: server pinned to core 0, crowd to core 1; warmup 20s, 4 x 15s windows, ladder to 200. Ratios between two servers under this mode are meaningful; the absolute numbers describe one core, not a host.
+
+  Basis server benchmark
+  Cores          2 logical
+  Memory         6.0 GB (container-limited)
+  OS             Ubuntu 26.04 LTS / X64
+  Runtime        .NET 10.0.11
+  SO_REUSEPORT   available
+  Link           tap0, 10 Gbit/s, MTU 65520
+  net.core.rmem_max            unreadable
+  net.core.wmem_max            unreadable
+  net.core.netdev_max_backlog  unreadable
+  GPU            none - the server runs every pass on the CPU, which is the supported default
+  Server         /tmp/claude-1001/-home-sandbox-dev-basis-Basis-Server/2c29acb6-5452-4364-a6d0-51b9bf41e00f/scratchpad/bench/servers/rust
+
+  /help for commands. /auto runs the whole thing.
+
+
+  windows       4             timed windows per arm; five is the floor for a verdict
+  window-sec    15            seconds per window
+  warmup-sec    20            settling time before the first window; the slicing loop oscillates, so shorter is riskier
+  max-players   200           ceiling the ladder climbs to
+  corpus        (generated)   captured avatar bundles for the codec benchmark
+  knobs         (all)         sweep only these settings; '-' for all
+  autowrite     on            write the tuning profile when a run finishes
+  two-core      on            pin the server to core 0 and the crowd to core 1; for comparing two servers on a two-core box
+  modern-client (none)        directory of the Rust (iroh) load client, for a mixed crowd; '-' for none
+  mix           1             share of the crowd that joins as legacy LiteNetLib clients, 0..1; the rest join over iroh
+
+  /set <name> <value> to change one. They apply to the next job, not a running one.
+  [measure] starting server...
+  [measure] starting 50 load clients on this machine (loopback) [two-core: server on core 0, crowd on core 1]...
+  [measure] 50 connected; warming up 20s (the slicing controller oscillates, so this is not optional)...
+  [measure] window 1/4: 83.33 Hz/pair, 0.20 cores, 1 MB/s, delivery 100.0 %, slice 1.0
+  [measure] window 2/4: 83.33 Hz/pair, 0.20 cores, 1 MB/s, delivery 100.0 %, slice 1.0
+  [measure] window 3/4: 83.33 Hz/pair, 0.19 cores, 1 MB/s, delivery 100.0 %, slice 1.0
+  [measure] window 4/4: 83.33 Hz/pair, 0.23 cores, 1 MB/s, delivery 100.0 %, slice 1.0
+
+  50 players, 4 windows
+    delivered      83.333 Hz/pair (IQR 0.000)
+    delivery ratio 100.00 %
+    server CPU     0.20 cores (load client 0.06)
+    egress         1 MB/s, 4,293 datagrams/s
+    drops          0/s avatar, 0/s voice
+    slicing        1.0, tick 0.48 ms, overrun 0.0 %
+    memory         0 MB committed, 0 MB fragmented, GC pause 0.0%
+    voice heard    99.44 % (measured at the receivers)
+    RESULT label=measure players=50 windows=4 pairHz=83.3333 delivery=1.0000 serverCores=0.198 clientCores=0.064 mbps=0.781 datagramsPerSec=4293.0 dropsPerSec=0.0 voiceDropsPerSec=0.0 slice=1.00 tickMs=0.483 overrun=0.0000 committedMb=0.0 voiceHeard=0.9944
+
+  measure 50 finished after 1.4 min.

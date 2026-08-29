@@ -91,6 +91,16 @@ public sealed class SessionSettings
     /// </summary>
     public bool AutoWrite { get; set; } = true;
 
+    /// <summary>See <see cref="Harness.RunOptions.TwoCore"/>. Turning it on shortens the
+    /// timings (20 s warmup, 4 x 15 s windows, 200-player ceiling) unless they were set by hand.</summary>
+    public bool TwoCore { get; set; }
+
+    /// <summary>Directory of the Rust (iroh) load client for a mixed crowd; null for all-legacy.</summary>
+    public string? ModernClientDirectory { get; set; }
+
+    /// <summary>Share of the crowd that joins as legacy LiteNetLib clients when a modern client is set.</summary>
+    public double LegacyFraction { get; set; } = 1.0;
+
     /// <summary>
     /// Restrict the sweep to these settings; empty means every eligible one.
     ///
@@ -137,6 +147,12 @@ public sealed class SessionSettings
             "sweep only these settings; '-' for all");
         yield return ("autowrite", AutoWrite ? "on" : "off",
             "write the tuning profile when a run finishes");
+        yield return ("two-core", TwoCore ? "on" : "off",
+            "pin the server to core 0 and the crowd to core 1; for comparing two servers on a two-core box");
+        yield return ("modern-client", ModernClientDirectory ?? "(none)",
+            "directory of the Rust (iroh) load client, for a mixed crowd; '-' for none");
+        yield return ("mix", LegacyFraction.ToString("0.##", CultureInfo.InvariantCulture),
+            "share of the crowd that joins as legacy LiteNetLib clients, 0..1; the rest join over iroh");
     }
 
     public bool TrySet(string name, string value, out string message)
@@ -167,6 +183,35 @@ public sealed class SessionSettings
                 AutoWrite = value is "on" or "true" or "1" or "yes";
                 message = $"autowrite = {(AutoWrite ? "on" : "off")}" +
                           (AutoWrite ? "" : ". Runs will report only; /write applies them.");
+                return true;
+            case "two-core":
+                TwoCore = value is "on" or "true" or "1" or "yes";
+                _explicit.Remove(name);
+                if (TwoCore)
+                {
+                    // Small timings for a small box. Anything set by hand stays.
+                    if (!WasSetByHand("warmup-sec")) WarmupSeconds = 20;
+                    if (!WasSetByHand("windows")) Windows = 4;
+                    if (!WasSetByHand("window-sec")) WindowSeconds = 15;
+                    if (!WasSetByHand("max-players")) MaxPlayers = 200;
+                }
+                message = TwoCore
+                    ? $"two-core = on: server pinned to core 0, crowd to core 1; warmup {WarmupSeconds}s, {Windows} x {WindowSeconds}s windows, ladder to {MaxPlayers}. " +
+                      "Ratios between two servers under this mode are meaningful; the absolute numbers describe one core, not a host."
+                    : "two-core = off";
+                return true;
+            case "modern-client":
+                ModernClientDirectory = value == "-" || value.Length == 0 ? null : value;
+                message = $"modern-client = {ModernClientDirectory ?? "(none)"}";
+                return true;
+            case "mix":
+                if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double fraction) || fraction < 0 || fraction > 1)
+                {
+                    message = "mix takes the legacy share as a fraction, 0..1 (e.g. 0.5 = half legacy, half iroh).";
+                    return false;
+                }
+                LegacyFraction = fraction;
+                message = $"mix = {fraction:0.##} legacy" + (ModernClientDirectory == null && fraction < 1 ? " (set modern-client too, or the crowd stays all-legacy)" : "");
                 return true;
             case "corpus":
                 CorpusPath = value == "-" || value.Length == 0 ? null : value;
@@ -314,6 +359,15 @@ public sealed class BenchmarkSession
             sb.AppendLine($"    kernel drops   {kernel:N0}/s inbound datagrams discarded - the receive path is the limit");
         if (result.VoiceDeliveredFraction >= 0)
             sb.AppendLine($"    voice heard    {result.VoiceDeliveredFraction:P2} (measured at the receivers)");
+        // One line a script can read: the same medians, comma separated, invariant culture.
+        sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+            $"    RESULT label={result.Label} players={result.PeakConnected} windows={result.Windows.Count} " +
+            $"pairHz={result.Median(w => w.DeliveredPairHz):F4} delivery={result.Median(w => w.DeliveryRatio):F4} " +
+            $"serverCores={result.Median(w => w.ServerCores):F3} clientCores={result.Median(w => w.ClientCores):F3} " +
+            $"mbps={result.Median(w => w.MegabytesOutPerSecond):F3} datagramsPerSec={result.Median(w => w.DatagramsOutPerSecond):F1} " +
+            $"dropsPerSec={result.Median(w => w.DropsPerSecond):F1} voiceDropsPerSec={result.Median(w => w.VoiceDropsPerSecond):F1} " +
+            $"slice={result.Median(w => w.SliceCount):F2} tickMs={result.Median(w => w.TickMs):F3} overrun={result.Median(w => w.OverrunRatio):F4} " +
+            $"committedMb={result.Median(w => w.CommittedMb):F1} voiceHeard={result.VoiceDeliveredFraction:F4}"));
         return sb.ToString();
     }
 
@@ -585,6 +639,9 @@ public sealed class BenchmarkSession
         Windows = Settings.Windows,
         Label = label,
         Driver = Driver,
+        TwoCore = Settings.TwoCore,
+        ModernClientDirectory = Settings.ModernClientDirectory,
+        LegacyFraction = Settings.LegacyFraction,
     };
 
     // ── output ──────────────────────────────────────────────────────────────────────────

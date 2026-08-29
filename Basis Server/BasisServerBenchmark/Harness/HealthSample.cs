@@ -18,6 +18,15 @@ public sealed record HealthSample
     public bool Ready { get; init; }
     public int Visitors { get; init; }
 
+    /// <summary>Which stack the server runs ("litenetlib", "iroh", "mixed"); "" from a server that does not say.</summary>
+    public string Stack { get; init; } = "";
+
+    /// <summary>The iroh connection string, when the server has an iroh listener; "" otherwise.</summary>
+    public string IrohConnectionString { get; init; } = "";
+
+    /// <summary>The LiteNetLib port, when the server says; 0 otherwise.</summary>
+    public int LegacyPort { get; init; }
+
     // ── Cumulative: differences only ──────────────────────────────────────────
     public long BytesSent { get; init; }
     public long BytesReceived { get; init; }
@@ -168,6 +177,9 @@ public sealed record HealthSample
                 SampledUtc = sampledUtc,
                 Ready = Bool(root, "ready"),
                 Visitors = (int)Long(root, "visitors"),
+                Stack = String(root, "stack"),
+                IrohConnectionString = String(root, "iroh"),
+                LegacyPort = (int)Long(root, "legacyPort"),
                 BytesSent = Long(root, "sent"),
                 BytesReceived = Long(root, "recv"),
                 PacketsSent = Long(root, "packetsSent"),
