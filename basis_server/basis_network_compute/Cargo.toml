@@ -1,0 +1,11 @@
+[package]
+name = "basis_network_compute"
+description = "Port of BasisNetworkCompute: the distance solver backends."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+basis_network_core = { path = "../basis_network_core" }
+rayon.workspace = true

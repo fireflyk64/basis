@@ -1,0 +1,99 @@
+# Rust port of "Basis Server". One crate per C# project, same names, so a reader of the C#
+# solution can find the matching crate without a map (PORTING.md has one anyway).
+[workspace]
+resolver = "3"
+members = [
+    "contrib/crypto",
+    "contrib/did",
+    "contrib/handles_common",
+    "contrib/handles_dns",
+    "basis_network_core",
+    "basis_network_compute",
+    "basis_network_server",
+    "basis_network_client",
+    "basis_server_console",
+    "basis_network_client_console",
+    "basis_bench_agent",
+    "basis_hello_world_client",
+    "basis_iroh_ffi",
+    "basis_server_tests",
+    "basis_rest_api_tests",
+]
+
+[workspace.package]
+version = "2.10.1"
+edition = "2024"
+license = "MIT"
+rust-version = "1.98"
+repository = "https://github.com/BasisVR/Basis"
+
+[workspace.dependencies]
+# Networking. iroh is the transport (QUIC streams + datagrams, hole punching, relays).
+iroh = { version = "1.1", default-features = false, features = ["tls-ring", "metrics"] }
+iroh-base = "1.1"
+n0-error = "1"
+n0-watcher = "1"
+tokio = { version = "1.53", features = ["full"] }
+tokio-util = "0.7"
+futures-util = "0.3"
+bytes = "1.12"
+# HTTP for the health check and the REST management API.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
+hyper = "1.11"
+# Sync primitives / collections.
+parking_lot = "0.12"
+dashmap = "6"
+arc-swap = "1"
+crossbeam-channel = "0.5"
+crossbeam-utils = "0.8"
+rayon = "1.12"
+# Serialization and config files.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+quick-xml = { version = "0.42", features = ["serialize"] }
+# Compression (avatar bundles).
+zstd = { version = "0.13", features = ["experimental"] }
+lz4_flex = { version = "0.14", default-features = false, features = ["safe-encode", "safe-decode", "std"] }
+half = "2"
+fearless_simd = "0.7"
+# Crypto — versions aligned with iroh's own tree so one copy of curve25519 is built.
+ed25519-dalek = { version = "3", features = ["rand_core"] }
+x25519-dalek = { version = "3", features = ["static_secrets"] }
+sha2 = "0.11"
+hkdf = "0.13"
+chacha20poly1305 = "0.11"
+rand = "0.10"
+rand_core = "0.10"
+base64 = "0.22"
+bs58 = "0.5"
+unsigned-varint = "0.8"
+hickory-resolver = "0.26"
+# Misc.
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+num_cpus = "1"
+libc = "0.2"
+sysinfo = "0.39"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Test-only.
+rstest = "0.26"
+serial_test = "4"
+tempfile = "3"
+
+# Every crate at opt-level 0 compiles fast but the crypto and compression this server leans on
+# (TLS handshakes for every test connection, zstd on every bundle) is unbearably slow that way, so
+# dependencies get a little optimisation while our own crates stay quick to rebuild. Debuginfo is
+# line tables only: full DWARF for a 380-crate tree is what pushed the linker past this box's 8 GB.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1
+
+[profile.test]
+debug = "line-tables-only"
+
+[profile.release]
+debug = "line-tables-only"

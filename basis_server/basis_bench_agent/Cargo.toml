@@ -1,0 +1,13 @@
+[package]
+name = "basis_bench_agent"
+description = "Port of BasisBenchAgent: remote agent that launches load clients for the benchmark."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true

@@ -1,0 +1,11 @@
+/target
+**/target
+*.pdb
+# Runtime folders the server creates beside its binary, same as the C# server.
+/config
+/logs
+/initialresources
+/defaultlibrary
+# C# build output for the FFI bindings and hello world clients.
+csharp/**/bin/
+csharp/**/obj/

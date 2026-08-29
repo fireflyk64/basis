@@ -1,0 +1,17 @@
+[package]
+name = "basis_crypto"
+description = "Port of Contrib/Crypto: Ed25519, X25519, HKDF-SHA256 and ChaCha20-Poly1305 primitives."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ed25519-dalek.workspace = true
+x25519-dalek.workspace = true
+sha2.workspace = true
+hkdf.workspace = true
+chacha20poly1305.workspace = true
+rand.workspace = true
+rand_core.workspace = true
+thiserror.workspace = true

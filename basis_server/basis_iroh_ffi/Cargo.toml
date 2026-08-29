@@ -1,0 +1,18 @@
+[package]
+name = "basis_iroh_ffi"
+description = "C ABI over iroh for the C# clients (P/Invoke)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+iroh.workspace = true
+iroh-base.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+parking_lot.workspace = true
+libc.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]

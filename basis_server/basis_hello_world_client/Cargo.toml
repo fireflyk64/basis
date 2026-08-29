@@ -1,0 +1,22 @@
+[package]
+name = "basis_hello_world_client"
+description = "Port of BasisHelloWorldClient: the minimal echo client and the direct-link HelloPeerClient."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+basis_network_client = { path = "../basis_network_client" }
+basis_network_core = { path = "../basis_network_core" }
+basis_crypto = { path = "../contrib/crypto" }
+basis_did = { path = "../contrib/did" }
+iroh.workspace = true
+tokio.workspace = true
+parking_lot.workspace = true
+bytes.workspace = true
+rand.workspace = true
+
+[[bin]]
+name = "basis_hello_world"
+path = "src/main.rs"

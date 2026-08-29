@@ -1,0 +1,43 @@
+[package]
+name = "basis_network_server"
+description = "Port of BasisNetworkServer: the Basis relay server."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+basis_network_core = { path = "../basis_network_core" }
+basis_network_compute = { path = "../basis_network_compute" }
+basis_did = { path = "../contrib/did" }
+basis_crypto = { path = "../contrib/crypto" }
+iroh.workspace = true
+iroh-base.workspace = true
+tokio.workspace = true
+axum.workspace = true
+hyper.workspace = true
+bytes.workspace = true
+parking_lot.workspace = true
+dashmap.workspace = true
+arc-swap.workspace = true
+crossbeam-channel.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+quick-xml.workspace = true
+zstd.workspace = true
+lz4_flex.workspace = true
+half.workspace = true
+uuid.workspace = true
+regex.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+num_cpus.workspace = true
+libc.workspace = true
+sysinfo.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
+serial_test.workspace = true
+tempfile.workspace = true

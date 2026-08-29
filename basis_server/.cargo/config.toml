@@ -1,0 +1,7 @@
+# Sized for a small box: two cores and an 8 GB memory ceiling. rustc peaks at 1-2 GB per crate,
+# so two jobs is the most that fits alongside a running test host. Raise it on a real build host.
+[build]
+jobs = 2
+
+[net]
+retry = 3

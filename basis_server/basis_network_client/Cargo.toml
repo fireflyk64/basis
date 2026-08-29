@@ -1,0 +1,18 @@
+[package]
+name = "basis_network_client"
+description = "Port of BasisNetworkClient: client connect + DID auth."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+basis_network_core = { path = "../basis_network_core" }
+basis_did = { path = "../contrib/did" }
+basis_crypto = { path = "../contrib/crypto" }
+iroh.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+thiserror.workspace = true

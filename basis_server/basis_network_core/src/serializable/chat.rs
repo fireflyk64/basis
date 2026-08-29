@@ -1,0 +1,117 @@
+use crate::io::{NetDataReader, NetDataWriter, NetResult};
+use crate::BNL;
+
+use super::identity::PlayerIdMessage;
+
+/// Client-to-server chat message. Contains UTF-8 encoded text.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ChatMessage {
+    /// The UTF-8 encoded chat message bytes.
+    pub payload: Vec<u8>,
+    /// Length of the payload in bytes.
+    pub payload_size: u16,
+    /// Whether receivers should play their chat notification sound.
+    pub play_notification_sound: bool,
+}
+
+impl ChatMessage {
+    /// Maximum allowed message length in bytes.
+    pub const MAX_PAYLOAD_BYTES: usize = 512;
+
+    pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
+        self.play_notification_sound = true;
+        let payload_size_wire = usize::from(reader.get_ushort()?);
+        let read_size = payload_size_wire.min(Self::MAX_PAYLOAD_BYTES);
+
+        if payload_size_wire == 0 {
+            self.payload = Vec::new();
+            self.payload_size = 0;
+        } else if reader.available_bytes() < read_size {
+            self.payload = Vec::new();
+            self.payload_size = 0;
+            reader.skip_bytes(payload_size_wire.min(reader.available_bytes()));
+            return Ok(());
+        } else {
+            self.payload_size = read_size as u16;
+            self.payload = reader.get_bytes_vec(read_size)?;
+            let excess_size = payload_size_wire - read_size;
+            if excess_size > 0 {
+                reader.skip_bytes(excess_size.min(reader.available_bytes()));
+            }
+        }
+
+        if reader.available_bytes() > 0 {
+            self.play_notification_sound = reader.get_bool()?;
+        }
+        Ok(())
+    }
+
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+        if self.payload.is_empty() {
+            writer.put_ushort(0);
+            writer.put_bool(self.play_notification_sound);
+            return;
+        }
+        self.payload_size = self.payload.len().min(Self::MAX_PAYLOAD_BYTES) as u16;
+        writer.put_ushort(self.payload_size);
+        writer.put_bytes_range(&self.payload, 0, usize::from(self.payload_size));
+        writer.put_bool(self.play_notification_sound);
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ConsoleData {
+    pub message_index: u8,
+    pub array: Option<Vec<u8>>,
+}
+
+impl ConsoleData {
+    pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
+        let bytes_available = reader.available_bytes();
+        if bytes_available > 0 {
+            self.message_index = reader.get_byte()?;
+            let payload_size = usize::from(reader.get_ushort()?);
+            if payload_size > 0 {
+                if payload_size > reader.available_bytes() {
+                    BNL::log_error(format!("ConsoleData payload {payload_size} exceeds available data ({} bytes).", reader.available_bytes()));
+                    self.array = Some(Vec::new());
+                    return Ok(());
+                }
+                self.array = Some(reader.get_bytes_vec(payload_size)?);
+            } else {
+                self.array = Some(Vec::new());
+            }
+        } else {
+            BNL::log_error(format!("Unable to read remaining bytes, available: {bytes_available}"));
+        }
+        Ok(())
+    }
+
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+        writer.put_byte(self.message_index);
+        let size = self.array.as_ref().map(|a| a.len() as u16).unwrap_or(0);
+        writer.put_ushort(size);
+        if size > 0 {
+            writer.put_bytes(self.array.as_ref().unwrap());
+        }
+    }
+}
+
+/// Server-to-client chat message. Wraps the chat payload with the sender's player ID.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ServerChatMessage {
+    pub player_id_message: PlayerIdMessage,
+    pub chat_message: ChatMessage,
+}
+
+impl ServerChatMessage {
+    pub fn deserialize(&mut self, reader: &mut NetDataReader) -> NetResult<()> {
+        self.player_id_message.deserialize(reader)?;
+        self.chat_message.deserialize(reader)
+    }
+
+    pub fn serialize(&mut self, writer: &mut NetDataWriter) {
+        self.player_id_message.serialize(writer);
+        self.chat_message.serialize(writer);
+    }
+}

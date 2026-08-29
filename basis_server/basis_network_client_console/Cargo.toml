@@ -1,0 +1,22 @@
+[package]
+name = "basis_network_client_console"
+description = "Port of BasisNetworkClientConsole: the headless load-test client."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+basis_network_client = { path = "../basis_network_client" }
+basis_network_core = { path = "../basis_network_core" }
+basis_crypto = { path = "../contrib/crypto" }
+basis_did = { path = "../contrib/did" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+quick-xml.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+lz4_flex.workspace = true
+zstd.workspace = true
+half.workspace = true
