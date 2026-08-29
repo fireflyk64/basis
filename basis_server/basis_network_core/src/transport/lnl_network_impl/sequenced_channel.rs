@@ -51,7 +51,7 @@ impl SequencedChannel {
         self.outgoing_queue.push_back(packet);
     }
 
-    pub fn send_next_packets(&mut self, current_time: i64, resend_delay_ms: f64, send: &mut dyn FnMut(&NetPacket)) -> bool {
+    pub fn send_next_packets(&mut self, current_time: i64, resend_delay_ms: f64, send: &mut dyn FnMut(&NetPacket), on_dequeue: &mut dyn FnMut(usize)) -> bool {
         if self.reliable && self.outgoing_queue.is_empty() {
             let packet_hold_time = (current_time - self.last_packet_send_time) as f64;
             if packet_hold_time >= resend_delay_ms * TICKS_PER_MILLISECOND as f64
@@ -62,6 +62,7 @@ impl SequencedChannel {
             }
         } else {
             while let Some(mut packet) = self.outgoing_queue.pop_front() {
+                on_dequeue(packet.size());
                 self.local_sequence = (self.local_sequence + 1) % i32::from(NetConstants::MAX_SEQUENCE);
                 packet.set_sequence(self.local_sequence as u16);
                 packet.set_channel_id(self.id);
@@ -142,7 +143,7 @@ mod tests {
         let mut tx = SequencedChannel::new(false, 1, 0);
         tx.add_to_queue(packet(0));
         let mut out = Vec::new();
-        assert!(!tx.send_next_packets(1, 27.0, &mut |p| out.push(p.clone())));
+        assert!(!tx.send_next_packets(1, 27.0, &mut |p| out.push(p.clone()), &mut |_| {}));
         assert_eq!(out[0].sequence(), 1);
         assert_eq!(out[0].channel_id(), 1);
     }
@@ -152,10 +153,10 @@ mod tests {
         let mut tx = SequencedChannel::new(true, 3, 0);
         tx.add_to_queue(packet(0));
         let mut out = Vec::new();
-        assert!(tx.send_next_packets(0, 27.0, &mut |p| out.push(p.clone())));
+        assert!(tx.send_next_packets(0, 27.0, &mut |p| out.push(p.clone()), &mut |_| {}));
         assert_eq!(out.len(), 1);
         // Resent after the delay, and it keeps the sequence it was given.
-        assert!(tx.send_next_packets(40 * TICKS_PER_MILLISECOND, 27.0, &mut |p| out.push(p.clone())));
+        assert!(tx.send_next_packets(40 * TICKS_PER_MILLISECOND, 27.0, &mut |p| out.push(p.clone()), &mut |_| {}));
         assert_eq!(out.len(), 2);
         assert_eq!(out[1].sequence(), 1);
         // The receiver acks it: the ack carries the sequence, and the sender stops.
@@ -164,11 +165,11 @@ mod tests {
         assert!(rx.process_packet(out[0].clone(), &mut delivered).request_send);
         assert_eq!(delivered[0].0, DeliveryMethod::ReliableSequenced);
         let mut acks = Vec::new();
-        rx.send_next_packets(0, 27.0, &mut |p| acks.push(p.clone()));
+        rx.send_next_packets(0, 27.0, &mut |p| acks.push(p.clone()), &mut |_| {});
         assert_eq!(acks.len(), 1);
         assert_eq!(acks[0].property(), Some(PacketProperty::Ack));
         assert_eq!(acks[0].sequence(), 1);
         tx.process_packet(acks[0].clone(), &mut delivered);
-        assert!(!tx.send_next_packets(100 * TICKS_PER_MILLISECOND, 27.0, &mut |_| panic!("nothing left to resend")));
+        assert!(!tx.send_next_packets(100 * TICKS_PER_MILLISECOND, 27.0, &mut |_| panic!("nothing left to resend"), &mut |_| {}));
     }
 }

@@ -170,7 +170,9 @@ impl ReliableChannel {
 
     /// Sends what the window allows and resends what is overdue. Returns whether anything is
     /// still pending, which is the signal to keep the channel in the peer's send queue.
-    pub fn send_next_packets(&mut self, current_time: i64, resend_delay_ms: f64, send: &mut dyn FnMut(&NetPacket)) -> bool {
+    /// `on_dequeue` is called with each packet's size as it leaves the outgoing queue into the
+    /// window, so the peer can decrement its reliable byte budget.
+    pub fn send_next_packets(&mut self, current_time: i64, resend_delay_ms: f64, send: &mut dyn FnMut(&NetPacket), on_dequeue: &mut dyn FnMut(usize)) -> bool {
         if self.must_send_acks {
             self.must_send_acks = false;
             send(&self.outgoing_acks);
@@ -187,6 +189,7 @@ impl ReliableChannel {
             let Some(mut packet) = self.outgoing_queue.pop_front() else {
                 break;
             };
+            on_dequeue(packet.size());
             packet.set_sequence(self.local_sequence as u16);
             packet.set_channel_id(self.id);
             let slot = Self::slot(self.local_sequence, self.window_size);
@@ -359,17 +362,17 @@ mod tests {
             tx.add_to_queue(NetPacket::with_property(PacketProperty::Channeled, 1 + usize::from(i)));
         }
         let mut sent = Vec::new();
-        assert!(tx.send_next_packets(1_000_000, 27.0, &mut |p| sent.push(p.clone())));
+        assert!(tx.send_next_packets(1_000_000, 27.0, &mut |p| sent.push(p.clone()), &mut |_| {}));
         assert_eq!(sent.len(), 3);
         assert_eq!(sent.iter().map(|p| p.sequence()).collect::<Vec<_>>(), vec![0, 1, 2]);
         assert!(sent.iter().all(|p| p.channel_id() == 2));
 
         // Nothing is resent before the delay passes...
         let mut again = Vec::new();
-        assert!(tx.send_next_packets(1_000_000 + 10 * TICKS_PER_MILLISECOND, 27.0, &mut |p| again.push(p.clone())));
+        assert!(tx.send_next_packets(1_000_000 + 10 * TICKS_PER_MILLISECOND, 27.0, &mut |p| again.push(p.clone()), &mut |_| {}));
         assert!(again.is_empty());
         // ...and everything unacked is resent once it does.
-        assert!(tx.send_next_packets(1_000_000 + 30 * TICKS_PER_MILLISECOND, 27.0, &mut |p| again.push(p.clone())));
+        assert!(tx.send_next_packets(1_000_000 + 30 * TICKS_PER_MILLISECOND, 27.0, &mut |p| again.push(p.clone()), &mut |_| {}));
         assert_eq!(again.len(), 3);
 
         // The receiver acks 0 and 2 but not 1: the window moves past 0, 1 counts as a loss.
@@ -383,12 +386,12 @@ mod tests {
         assert_eq!(tx.local_window_start, 1);
         // Only the lost packet is pending now.
         let mut resent = Vec::new();
-        assert!(tx.send_next_packets(1_000_000 + 60 * TICKS_PER_MILLISECOND, 27.0, &mut |p| resent.push(p.clone())));
+        assert!(tx.send_next_packets(1_000_000 + 60 * TICKS_PER_MILLISECOND, 27.0, &mut |p| resent.push(p.clone()), &mut |_| {}));
         assert_eq!(resent.iter().map(|p| p.sequence()).collect::<Vec<_>>(), vec![1]);
         // Once it is acked the channel is idle.
         rx.process_packet(sent[1].clone(), &mut delivered);
         tx.process_packet(ack_for(&rx), &mut delivered);
-        assert!(!tx.send_next_packets(2_000_000, 27.0, &mut |_| {}));
+        assert!(!tx.send_next_packets(2_000_000, 27.0, &mut |_| {}, &mut |_| {}));
     }
 
     #[test]
@@ -398,7 +401,7 @@ mod tests {
             tx.add_to_queue(NetPacket::with_property(PacketProperty::Channeled, 1));
         }
         let mut sent = 0;
-        assert!(tx.send_next_packets(1, 27.0, &mut |_| sent += 1));
+        assert!(tx.send_next_packets(1, 27.0, &mut |_| sent += 1, &mut |_| {}));
         assert_eq!(sent, NetConstants::DEFAULT_WINDOW_SIZE);
         assert_eq!(tx.packets_in_queue(), 72);
     }
@@ -409,7 +412,7 @@ mod tests {
         let mut delivered = Vec::new();
         assert!(rx.process_packet(channeled(0, 0), &mut delivered).request_send);
         let mut out = Vec::new();
-        rx.send_next_packets(1, 27.0, &mut |p| out.push(p.clone()));
+        rx.send_next_packets(1, 27.0, &mut |p| out.push(p.clone()), &mut |_| {});
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].property(), Some(PacketProperty::Ack));
         assert_eq!(out[0].connection_number(), 1);
@@ -417,7 +420,7 @@ mod tests {
         assert_eq!(out[0].size(), 4 + 17);
         assert_eq!(out[0].raw()[4] & 1, 1, "bit for sequence 0 is set");
         let mut again = Vec::new();
-        assert!(!rx.send_next_packets(2, 27.0, &mut |p| again.push(p.clone())));
+        assert!(!rx.send_next_packets(2, 27.0, &mut |p| again.push(p.clone()), &mut |_| {}));
         assert!(again.is_empty());
     }
 }

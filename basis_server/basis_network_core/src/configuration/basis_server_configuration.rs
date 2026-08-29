@@ -87,6 +87,13 @@ basis_xml_config! {
         pub max_avatar_eye_height_meters: f32 = 100.0 => "MaxAvatarEyeHeightMeters" [Float],
         pub max_content_spheres_per_player: i32 = 32 => "MaxContentSpheresPerPlayer" [Int],
         pub max_network_ids_per_player: i32 = 32768 => "MaxNetworkIdsPerPlayer" [Int],
+        /// Objects one player may hold ownership of at once. Deliberately huge — a player
+        /// managing a large scene owns every prop in it — and it is a backstop against a client
+        /// claiming ids in a loop, not a budget anyone should reach. Ownership ids are strings
+        /// the client chooses and entries only leave when the owner disconnects, so this is the
+        /// only thing bounding that table. Roughly 100 bytes per entry: 262144 is ~26 MB for one
+        /// player at the ceiling, which is why it is a ceiling and not a target.
+        pub max_owned_objects_per_player: i32 = 262144 => "MaxOwnedObjectsPerPlayer" [Int],
         pub max_loaded_resources_per_player: i32 = 16384 => "MaxLoadedResourcesPerPlayer" [Int],
         pub max_scene_relay_megabits_per_second_per_player: i32 = 0 => "MaxSceneRelayMegabitsPerSecondPerPlayer" [Int],
         pub playspace_mover_locked: bool = false => "PlayspaceMoverLocked" [Bool],
@@ -115,7 +122,7 @@ impl Configuration {
     /// Bump when config changes should force existing files to be rewritten (e.g. to refresh doc
     /// comments). Newly-added settings are healed automatically regardless.
     // 13: LogConnectionHandshake added - the per-connection auth chatter is now off by default.
-    pub const CURRENT_CONFIG_VERSION: i32 = 13;
+    pub const CURRENT_CONFIG_VERSION: i32 = 14;
 
     /// Read config from file. If no file is found create a default config file at `file_path`.
     /// Also loads per-transport config sidecars from `{configDir}/transports/{stackId}.xml`.

@@ -17,7 +17,13 @@ namespace Basis.Network.Core
         UnknownHost,
         Reconnect,
         PeerToPeerConnection,
-        PeerNotFound
+        PeerNotFound,
+        /// <summary>
+        /// The far side stopped reading: its reliable send queue stayed over budget for the
+        /// grace period, so the connection was closed rather than buffered for without limit.
+        /// Raised by the Rust transports; LiteNetLib's own enum stops at PeerNotFound.
+        /// </summary>
+        SendQueueOverBudget
     }
 
     public partial struct DisconnectInfo

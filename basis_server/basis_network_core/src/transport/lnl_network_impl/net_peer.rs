@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use parking_lot::{Mutex, RwLock};
 
+use crate::BNL;
 use crate::transport::basis_network_shell::{DeliveryMethod, DisconnectReason, NetDebug, NetLogLevel, SendError};
 
 use super::compact_merge::CompactMerge;
@@ -80,6 +81,8 @@ enum UpdateAction {
     Nothing,
     Timeout,
     ConnectFailed,
+    /// The reliable send queue was over budget for the grace period: the peer is not reading.
+    SendQueueOverBudget,
 }
 
 pub(super) enum Channel {
@@ -112,10 +115,10 @@ impl Channel {
         }
     }
 
-    fn send_next_packets(&mut self, now: i64, resend_delay_ms: f64, send: &mut dyn FnMut(&NetPacket)) -> bool {
+    fn send_next_packets(&mut self, now: i64, resend_delay_ms: f64, send: &mut dyn FnMut(&NetPacket), on_dequeue: &mut dyn FnMut(usize)) -> bool {
         match self {
-            Self::Reliable(c) => c.send_next_packets(now, resend_delay_ms, send),
-            Self::Sequenced(c) => c.send_next_packets(now, resend_delay_ms, send),
+            Self::Reliable(c) => c.send_next_packets(now, resend_delay_ms, send, on_dequeue),
+            Self::Sequenced(c) => c.send_next_packets(now, resend_delay_ms, send, on_dequeue),
         }
     }
 
@@ -158,6 +161,11 @@ struct IncomingFragments {
 
 struct FragmentState {
     holded: HashMap<u16, IncomingFragments>,
+    /// Bytes of incomplete reassembly sets this peer currently makes the server hold. The set
+    /// COUNT alone is not a bound — one set may hold up to 65535 fragments — so this is the
+    /// number that actually caps the memory a sender can pin by starting messages and never
+    /// finishing them.
+    held_bytes: usize,
     peer_clock_ms: f64,
     next_sweep_ms: f64,
 }
@@ -214,11 +222,23 @@ pub struct LnlPeer {
     unreliable_count: AtomicI32,
     priority_unreliable: Mutex<VecDeque<NetPacket>>,
     priority_unreliable_count: AtomicI32,
+    /// Bytes of reliable data queued but not yet handed to a channel's send window, and the
+    /// per-peer budget. The 128-packet window is already bounded; this bounds the queue ahead of
+    /// it, which is what a peer that never acks makes grow without limit.
+    reliable_queued_bytes: AtomicUsize,
+    reliable_budget: AtomicUsize,
+    /// The last time reliable data left the outgoing queue for a channel's send window. While
+    /// the queue is non-empty and this is not advancing, the peer is not acknowledging (its
+    /// window is full), so `update`'s watchdog disconnects it once the gap passes the grace.
+    last_reliable_drain: Mutex<Instant>,
     fragments: Mutex<FragmentState>,
     fragment_id: AtomicU32,
     logic: Mutex<LogicState>,
     shutdown_lock: Mutex<()>,
     tag: RwLock<Option<Arc<dyn Any + Send + Sync>>>,
+    /// True while this peer exists only to deliver a rejection, so the manager's cap on those
+    /// releases exactly once when it goes.
+    is_reject_peer: AtomicBool,
     pub(super) statistics: PeerStatistics,
 }
 
@@ -256,7 +276,10 @@ impl LnlPeer {
             unreliable_count: AtomicI32::new(0),
             priority_unreliable: Mutex::new(VecDeque::new()),
             priority_unreliable_count: AtomicI32::new(0),
-            fragments: Mutex::new(FragmentState { holded: HashMap::new(), peer_clock_ms: 0.0, next_sweep_ms: FRAGMENT_SWEEP_INTERVAL_MS }),
+            reliable_queued_bytes: AtomicUsize::new(0),
+            reliable_budget: AtomicUsize::new(0),
+            last_reliable_drain: Mutex::new(Instant::now()),
+            fragments: Mutex::new(FragmentState { holded: HashMap::new(), held_bytes: 0, peer_clock_ms: 0.0, next_sweep_ms: FRAGMENT_SWEEP_INTERVAL_MS }),
             fragment_id: AtomicU32::new(0),
             logic: Mutex::new(LogicState {
                 merge_data,
@@ -275,6 +298,7 @@ impl LnlPeer {
             }),
             shutdown_lock: Mutex::new(()),
             tag: RwLock::new(None),
+            is_reject_peer: AtomicBool::new(false),
             statistics: PeerStatistics::default(),
         };
         peer.reset_mtu();
@@ -638,9 +662,37 @@ impl LnlPeer {
         }
     }
 
-    fn queue_on_channel(&self, idx: usize, packet: NetPacket) {
+    /// Marks this peer as one that exists only to deliver a rejection.
+    pub(super) fn mark_reject_peer(&self) {
+        self.is_reject_peer.store(true, Ordering::Release);
+    }
+
+    /// Clears and returns the reject-peer marker, so the manager's counter is released once.
+    pub(super) fn take_reject_peer(&self) -> bool {
+        self.is_reject_peer.swap(false, Ordering::AcqRel)
+    }
+
+    /// Per-peer reliable byte budget for the current population, resolved on each admit/leave.
+    pub(super) fn refresh_reliable_budget(&self, budget: usize) {
+        self.reliable_budget.store(budget, Ordering::Relaxed);
+    }
+
+    /// Queues a reliable packet, refusing it when the peer is over its byte budget (a client
+    /// that has stopped acknowledging). `bytes` is charged against the budget and given back by
+    /// the send loop as the packet leaves the outgoing queue.
+    fn queue_on_channel(&self, idx: usize, packet: NetPacket) -> Result<(), SendError> {
+        let budget = self.reliable_budget.load(Ordering::Relaxed);
+        let size = packet.size();
+        if budget > 0 {
+            let queued = self.reliable_queued_bytes.load(Ordering::Acquire);
+            if queued.saturating_add(size) > budget {
+                return Err(SendError::QueueFull { queued, budget });
+            }
+        }
+        self.reliable_queued_bytes.fetch_add(size, Ordering::Release);
         self.with_channel(idx, true, |c| c.add_to_queue(packet));
         self.add_to_reliable_channel_send_queue(idx);
+        Ok(())
     }
 
     pub(super) fn get_packets_count_in_queue(&self, channel_number: u8, delivery_method: DeliveryMethod) -> i32 {
@@ -681,6 +733,16 @@ impl LnlPeer {
             let Ok(total_packets_u16) = u16::try_from(total_packets) else {
                 return Err(SendError::TooBig { size: length, limit: packet_data_size * usize::from(u16::MAX), method: delivery_method });
             };
+            // A reliable message is all or nothing, so the whole fragmented message is checked
+            // against the budget up front rather than tearing it half into the queue.
+            let budget = self.reliable_budget.load(Ordering::Relaxed);
+            if budget > 0 {
+                let full = total_packets * (header_size + NetConstants::FRAGMENT_HEADER_SIZE) + length;
+                let queued = self.reliable_queued_bytes.load(Ordering::Acquire);
+                if queued.saturating_add(full) > budget {
+                    return Err(SendError::QueueFull { queued, budget });
+                }
+            }
             let current_fragment_id = self.fragment_id.fetch_add(1, Ordering::Relaxed).wrapping_add(1) as u16;
             let connection_num = self.connection_num();
             for (part_idx, chunk) in data.chunks(packet_data_size).enumerate() {
@@ -692,7 +754,8 @@ impl LnlPeer {
                 p.set_fragments_total(total_packets_u16);
                 p.mark_fragmented();
                 p.raw_mut()[NetConstants::FRAGMENTED_HEADER_TOTAL_SIZE..].copy_from_slice(chunk);
-                self.queue_on_channel(channel_idx, p);
+                // Budget already reserved above; the per-packet check cannot fire, so ignore it.
+                let _ = self.queue_on_channel(channel_idx, p);
             }
             return Ok(());
         }
@@ -706,10 +769,10 @@ impl LnlPeer {
             None => {
                 packet.raw_mut()[1] = channel_number;
                 self.enqueue_unreliable(packet);
+                Ok(())
             }
             Some(idx) => self.queue_on_channel(idx, packet),
         }
-        Ok(())
     }
 
     /// Builds an unreliable packet from raw user bytes and enqueues it, optionally patching one
@@ -785,7 +848,10 @@ impl LnlPeer {
         self.unreliable_count.store(0, Ordering::Release);
         self.priority_unreliable.lock().clear();
         self.priority_unreliable_count.store(0, Ordering::Release);
-        self.fragments.lock().holded.clear();
+        self.reliable_queued_bytes.store(0, Ordering::Release);
+        let mut fragments = self.fragments.lock();
+        fragments.holded.clear();
+        fragments.held_bytes = 0;
     }
 
     // ── Merging ───────────────────────────────────────────────────────────
@@ -1075,10 +1141,22 @@ impl LnlPeer {
         }
         let packet_frag_id = p.fragment_id();
         let packet_channel_id = p.channel_id();
+        let packet_bytes = p.size();
         let complete = {
             let mut fragments = self.fragments.lock();
             let clock = fragments.peer_clock_ms;
             let cap = NetConstants::MAX_FRAGMENTS_IN_WINDOW * usize::from(manager.settings().channels_count) * NetConstants::FRAGMENTED_CHANNELS_COUNT;
+            // The byte bound is the real one: a sender that opens sets and never finishes them
+            // can otherwise pin (sets x fragments x MTU) bytes, which the set count does not
+            // limit in any useful way.
+            let byte_cap = manager.settings().max_fragment_bytes_per_peer;
+            if fragments.held_bytes.saturating_add(packet_bytes) > byte_cap {
+                NetDebug::write(
+                    NetLogLevel::Error,
+                    &format!("[NM] peer {}: dropping a fragment; incomplete reassembly sets already hold {} of {byte_cap} allowed bytes.", self.id, fragments.held_bytes),
+                );
+                return;
+            }
             let holded_len = fragments.holded.len();
             let incoming = match fragments.holded.entry(packet_frag_id) {
                 std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
@@ -1107,11 +1185,19 @@ impl LnlPeer {
             incoming.total_size += p.size().saturating_sub(NetConstants::FRAGMENTED_HEADER_TOTAL_SIZE);
             incoming.last_touched_ms = clock;
             incoming.fragments.insert(p.fragment_part(), p);
-            if incoming.received_count != usize::from(incoming.total_fragments) {
+            let complete = incoming.received_count == usize::from(incoming.total_fragments);
+            fragments.held_bytes = fragments.held_bytes.saturating_add(packet_bytes);
+            if !complete {
                 return;
             }
-            // All fragments received — take the set out of the table while under the lock.
-            fragments.holded.remove(&packet_frag_id)
+            // All fragments received — take the set out of the table while under the lock, and
+            // give its bytes back to the peer's budget.
+            let taken = fragments.holded.remove(&packet_frag_id);
+            if let Some(set) = &taken {
+                let bytes: usize = set.fragments.values().map(|f| f.size()).sum();
+                fragments.held_bytes = fragments.held_bytes.saturating_sub(bytes);
+            }
+            taken
         };
         let Some(mut complete) = complete else { return };
         // Outside the lock: the actual data copy.
@@ -1130,7 +1216,15 @@ impl LnlPeer {
     fn sweep_stale_fragments(&self) {
         let mut fragments = self.fragments.lock();
         let clock = fragments.peer_clock_ms;
-        fragments.holded.retain(|_, set| clock - set.last_touched_ms <= FRAGMENT_STALE_MS);
+        let mut reclaimed = 0usize;
+        fragments.holded.retain(|_, set| {
+            let keep = clock - set.last_touched_ms <= FRAGMENT_STALE_MS;
+            if !keep {
+                reclaimed += set.fragments.values().map(|f| f.size()).sum::<usize>();
+            }
+            keep
+        });
+        fragments.held_bytes = fragments.held_bytes.saturating_sub(reclaimed);
     }
 
     // ── Update (the logic thread) ─────────────────────────────────────────
@@ -1169,6 +1263,10 @@ impl LnlPeer {
                 ConnectionState::Connected => {
                     if self.time_since_last_packet() > settings.disconnect_timeout_ms {
                         UpdateAction::Timeout
+                    } else if self.reliable_queued_bytes.load(Ordering::Relaxed) > 0
+                        && self.last_reliable_drain.lock().elapsed().as_millis() as f32 >= settings.reliable_queue_grace_ms
+                    {
+                        UpdateAction::SendQueueOverBudget
                     } else {
                         UpdateAction::Nothing
                     }
@@ -1217,6 +1315,16 @@ impl LnlPeer {
                 manager.disconnect_peer_force(self, DisconnectReason::ConnectionFailed, 0, None);
                 return;
             }
+            UpdateAction::SendQueueOverBudget => {
+                BNL::log_warning(format!(
+                    "[NM] peer {}: {} bytes of reliable data have not left the send queue for over {:.0}s; disconnecting a client that is not reading.",
+                    self.id,
+                    self.reliable_queued_bytes.load(Ordering::Relaxed),
+                    settings.reliable_queue_grace_ms / 1000.0
+                ));
+                manager.disconnect_peer_force(self, DisconnectReason::SendQueueOverBudget, 0, None);
+                return;
+            }
             UpdateAction::Nothing => {}
         }
 
@@ -1261,7 +1369,17 @@ impl LnlPeer {
                 break;
             };
             let has_more = self
-                .with_channel(idx, false, |c| c.send_next_packets(now, resend_delay, &mut |p| self.send_user_data(&mut logic, &manager, p)))
+                .with_channel(idx, false, |c| {
+                    c.send_next_packets(
+                        now,
+                        resend_delay,
+                        &mut |p| self.send_user_data(&mut logic, &manager, p),
+                        &mut |size| {
+                            self.reliable_queued_bytes.fetch_update(Ordering::AcqRel, Ordering::Acquire, |q| Some(q.saturating_sub(size))).ok();
+                            *self.last_reliable_drain.lock() = Instant::now();
+                        },
+                    )
+                })
                 .unwrap_or(false);
             if has_more {
                 // still has something to send, re-add it to the send queue

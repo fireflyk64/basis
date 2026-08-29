@@ -20,12 +20,23 @@ basis_xml_config! {
         pub keep_alive_interval_ms: i32 = 0 => "KeepAliveIntervalMs" [Int],
         pub max_datagram_queue_per_peer: i32 = 0 => "MaxDatagramQueuePerPeer" [Int],
         pub max_priority_datagram_queue_per_peer: i32 = 0 => "MaxPriorityDatagramQueuePerPeer" [Int],
+        /// Bytes of reliable messages that may be queued for one peer before sends to it are
+        /// refused. 0 = a share of the box's memory divided by the population.
+        pub max_reliable_queue_bytes_per_peer: i32 = 0 => "MaxReliableQueueBytesPerPeer" [Int],
+        /// How long a peer may stay over that budget before it is disconnected for not reading.
+        pub reliable_queue_grace_ms: i32 = 5000 => "ReliableQueueGraceMs" [Int],
+        /// Bytes QUIC itself may buffer per connection for data the far side has not acknowledged. 0 = 8 MiB.
+        pub send_window_bytes: i32 = 0 => "SendWindowBytes" [Int],
+        /// Bytes QUIC may buffer per connection for data this side has not read yet. 0 = 32 MiB.
+        pub receive_window_bytes: i32 = 0 => "ReceiveWindowBytes" [Int],
+        /// Connections that may sit between the QUIC handshake and a connect verdict at once. 0 = 1024.
+        pub max_pending_handshakes: i32 = 0 => "MaxPendingHandshakes" [Int],
         pub tokio_worker_threads: i32 = 0 => "TokioWorkerThreads" [Int],
     }
 }
 
 impl IrohTransportConfig {
-    pub const CURRENT_CONFIG_VERSION: i32 = 2;
+    pub const CURRENT_CONFIG_VERSION: i32 = 3;
 
     pub fn relay_urls_list(&self) -> Vec<String> {
         self.relay_urls

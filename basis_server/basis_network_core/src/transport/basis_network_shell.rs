@@ -24,6 +24,9 @@ pub enum DisconnectReason {
     Reconnect,
     PeerToPeerConnection,
     PeerNotFound,
+    /// The peer stopped reading: its reliable send queue stayed over budget for the grace
+    /// period, so the server closed the connection rather than keep buffering for it.
+    SendQueueOverBudget,
 }
 
 #[derive(Clone, Debug)]
@@ -125,9 +128,11 @@ pub trait ConnectionRequest: Send + Sync {
     fn reject(&self, w: &NetDataWriter) -> BasisResult<()>;
 }
 
-/// Why a send was refused before it reached the wire. Every variant is a caller error — the
-/// C# transport threw `TooBigPacketException` / `ArgumentException` for the same cases — so
-/// none is worth retrying with the same arguments.
+/// Why a send was refused before it reached the wire. `TooBig`, `BadChannel` and `BadRange`
+/// are caller errors — the C# transport threw `TooBigPacketException` / `ArgumentException`
+/// for the same cases — so none of those is worth retrying with the same arguments.
+/// `QueueFull` is the peer's condition, not the caller's: the message is dropped, and the
+/// transport disconnects the peer if it stays over budget past the grace period.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SendError {
     #[error("payload of {size} bytes exceeds the {limit} byte limit for {method:?}; the transport cannot fragment it")]
@@ -136,12 +141,16 @@ pub enum SendError {
     BadChannel { channel: u8, max: u8 },
     #[error("range {offset}..{} is outside a buffer of {len} byte(s)", offset.saturating_add(*length))]
     BadRange { offset: usize, length: usize, len: usize },
+    #[error("the peer's reliable send queue holds {queued} bytes against a budget of {budget}; the client is not reading")]
+    QueueFull { queued: usize, budget: usize },
 }
 
 impl From<SendError> for BasisError {
     #[track_caller]
     fn from(err: SendError) -> Self {
-        BasisError::wrap(basis_error::FaultKind::Permanent, ErrorCode::Transport, err)
+        // A full queue clears itself as the peer reads (or the peer is dropped): transient.
+        let kind = if matches!(err, SendError::QueueFull { .. }) { basis_error::FaultKind::Transient } else { basis_error::FaultKind::Permanent };
+        BasisError::wrap(kind, ErrorCode::Transport, err)
     }
 }
 

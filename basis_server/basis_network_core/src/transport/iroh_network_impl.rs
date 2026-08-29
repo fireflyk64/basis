@@ -42,7 +42,7 @@
 use std::any::Any;
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -199,6 +199,15 @@ struct PeerState {
     last_packet: Mutex<Instant>,
     // Reliable sends, in order, drained by the sender task.
     reliable_queue: Mutex<VecDeque<Outgoing>>,
+    // Bytes of reliable data currently queued (payloads only) and the per-peer budget. A send
+    // that would take the queue past the budget is refused; a peer that stays over it past the
+    // grace period is disconnected — the difference between a slow client and a memory leak.
+    reliable_queued_bytes: AtomicUsize,
+    reliable_budget: AtomicUsize,
+    /// The last time a reliable frame left the queue for the wire. While the queue is non-empty
+    /// and this is not advancing, the peer is not reading (its flow-control window is full and
+    /// no acks are arriving), so the watchdog disconnects it once the gap passes the grace period.
+    last_reliable_drain: Mutex<Instant>,
     // Unreliable sends: voice ahead of bulk, each bounded, oldest dropped when full.
     bulk_queue: Mutex<VecDeque<Bytes>>,
     priority_queue: Mutex<VecDeque<Bytes>>,
@@ -212,6 +221,9 @@ struct PeerState {
     ping_sent_at: Mutex<Option<(i64, Instant)>>,
     /// Set once a datagram exceeded the live MTU, so that warning is logged once per peer.
     warned_too_large: AtomicBool,
+    /// A locally-decided disconnect reason (the send-queue watchdog), reported in place of the
+    /// generic "locally closed" that `conn.closed()` would otherwise yield.
+    local_disconnect_reason: Mutex<Option<DisconnectReason>>,
 }
 
 /// An iroh-backed peer. Cheap to clone; equality is by connection.
@@ -238,12 +250,22 @@ impl IrohNetPeer {
         self.state.manager.upgrade()
     }
 
-    fn enqueue_reliable(&self, channel: u8, ordered: bool, data: &[u8]) {
-        self.state
-            .reliable_queue
-            .lock()
-            .push_back(Outgoing::Reliable { channel, ordered, data: Bytes::copy_from_slice(data) });
+    fn enqueue_reliable(&self, channel: u8, ordered: bool, data: &[u8]) -> Result<(), SendError> {
+        let budget = self.state.reliable_budget.load(Ordering::Relaxed);
+        // The check and the update are one critical section so two concurrent sends cannot both
+        // pass a budget that only one of them fits.
+        let mut queue = self.state.reliable_queue.lock();
+        let queued = self.state.reliable_queued_bytes.load(Ordering::Acquire);
+        if budget > 0 && queued.saturating_add(data.len()) > budget {
+            // Over budget: refuse this message. The peer is holding more than it is allowed; the
+            // watchdog disconnects it if the queue does not drain.
+            return Err(SendError::QueueFull { queued, budget });
+        }
+        queue.push_back(Outgoing::Reliable { channel, ordered, data: Bytes::copy_from_slice(data) });
+        self.state.reliable_queued_bytes.fetch_add(data.len(), Ordering::Release);
+        drop(queue);
         self.state.notify.notify_one();
+        Ok(())
     }
 
     fn enqueue_unreliable(&self, channel: u8, sequenced: bool, data: &[u8]) {
@@ -323,8 +345,8 @@ impl NetPeer for IrohNetPeer {
             return Ok(()); // LiteNetLib dropped sends to a departed peer silently; so do we.
         }
         match delivery_method {
-            DeliveryMethod::ReliableOrdered | DeliveryMethod::ReliableSequenced => self.enqueue_reliable(channel_number, true, data),
-            DeliveryMethod::ReliableUnordered => self.enqueue_reliable(channel_number, false, data),
+            DeliveryMethod::ReliableOrdered | DeliveryMethod::ReliableSequenced => return self.enqueue_reliable(channel_number, true, data),
+            DeliveryMethod::ReliableUnordered => return self.enqueue_reliable(channel_number, false, data),
             DeliveryMethod::Unreliable => {
                 let limit = self.datagram_limit(false);
                 if data.len() > limit {
@@ -429,6 +451,18 @@ impl NetPeer for IrohNetPeer {
 // ────────────────────────────────────────────────────────────────────────────
 //  Connection request
 // ────────────────────────────────────────────────────────────────────────────
+
+/// Releases one pending-handshake slot when it goes out of scope, however `serve_connect`
+/// returns.
+struct PendingHandshakeSlot {
+    manager: Arc<ManagerInner>,
+}
+
+impl Drop for PendingHandshakeSlot {
+    fn drop(&mut self) {
+        self.manager.pending_handshakes.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 /// How long an undecided connection request stays open before the transport rejects it.
 const REQUEST_DECISION_TIMEOUT: Duration = Duration::from_secs(15);
@@ -575,6 +609,11 @@ struct ManagerInner {
     priority_dropped: AtomicI64,
     /// Probe connections awaiting a reply, keyed by the remote address the handler saw.
     probe_replies: DashMap<SocketAddr, Connection>,
+    /// Connections between the QUIC handshake and a connect verdict. Each holds a task, two
+    /// streams and the connect payload, so it is memory an unauthenticated peer can allocate:
+    /// bounded by count, not by the decision timeout alone.
+    pending_handshakes: AtomicI32,
+    handshake_overflow_logged: AtomicU32,
     weak_self: RwLock<Weak<ManagerInner>>,
 }
 
@@ -636,6 +675,8 @@ impl IrohNetManager {
             unreliable_dropped: AtomicI64::new(0),
             priority_dropped: AtomicI64::new(0),
             probe_replies: DashMap::new(),
+            pending_handshakes: AtomicI32::new(0),
+            handshake_overflow_logged: AtomicU32::new(0),
             weak_self: RwLock::new(Weak::new()),
         });
         *inner.weak_self.write() = Arc::downgrade(&inner);
@@ -852,9 +893,20 @@ impl ManagerInner {
         (bulk as u32, priority as u32)
     }
 
+    /// Per-peer reliable byte budget for the current population.
+    fn reliable_budget(&self) -> usize {
+        let peers = self.peers.len() as i32;
+        usize::try_from(BasisPopulationScale::reliable_queue_bytes_per_peer(self.transport_config.max_reliable_queue_bytes_per_peer, peers)).unwrap_or(0)
+    }
+
+    fn reliable_grace(&self) -> Duration {
+        Duration::from_millis(u64::try_from(self.transport_config.reliable_queue_grace_ms.max(0)).unwrap_or(5000))
+    }
+
     fn admit(self: &Arc<Self>, conn: Connection, remote: IpAddr, server_side: bool, remote_id: i32) -> IrohNetPeer {
         let id = if server_side { self.allocate_id() } else { 0 };
         let (bulk, priority) = self.queue_limits();
+        let reliable_budget = self.reliable_budget();
         let state = Arc::new(PeerState {
             id,
             remote_id: AtomicI32::new(remote_id),
@@ -870,6 +922,9 @@ impl ManagerInner {
             remote_time_delta: AtomicI64::new(0),
             last_packet: Mutex::new(Instant::now()),
             reliable_queue: Mutex::new(VecDeque::new()),
+            reliable_queued_bytes: AtomicUsize::new(0),
+            reliable_budget: AtomicUsize::new(reliable_budget),
+            last_reliable_drain: Mutex::new(Instant::now()),
             bulk_queue: Mutex::new(VecDeque::new()),
             priority_queue: Mutex::new(VecDeque::new()),
             queued_per_channel: std::array::from_fn(|_| AtomicU32::new(0)),
@@ -881,6 +936,7 @@ impl ManagerInner {
             control_tx: tokio::sync::Mutex::new(None),
             ping_sent_at: Mutex::new(None),
             warned_too_large: AtomicBool::new(false),
+            local_disconnect_reason: Mutex::new(None),
         });
         let peer = IrohNetPeer::new(state);
         self.peers.insert(id, peer.clone());
@@ -891,7 +947,9 @@ impl ManagerInner {
 
     fn refresh_queue_limits(&self) {
         let (bulk, priority) = self.queue_limits();
+        let reliable_budget = self.reliable_budget();
         for p in self.peers.iter() {
+            p.state.reliable_budget.store(reliable_budget, Ordering::Relaxed);
             p.state.bulk_limit.store(bulk, Ordering::Relaxed);
             p.state.priority_limit.store(priority, Ordering::Relaxed);
         }
@@ -918,12 +976,20 @@ impl ManagerInner {
         } else {
             idle / 3
         };
+        // Bound what QUIC itself holds per connection, not just what our reliable queue holds:
+        // the send window caps unacknowledged data buffered for a peer, the receive window caps
+        // data a peer can make us hold before the application reads it. Both are memory a single
+        // connection can pin, so they are configurable and default to sane ceilings.
+        let send_window = u64::try_from(self.transport_config.send_window_bytes).ok().filter(|v| *v > 0).unwrap_or(8 * 1024 * 1024);
+        let receive_window = u32::try_from(self.transport_config.receive_window_bytes).ok().filter(|v| *v > 0).unwrap_or(32 * 1024 * 1024);
         QuicTransportConfig::builder()
             .max_idle_timeout(IdleTimeout::try_from(idle).ok())
             .keep_alive_interval(keep_alive)
             .max_concurrent_uni_streams(VarInt::from_u32(4096))
             .datagram_receive_buffer_size(Some(4 * 1024 * 1024))
             .datagram_send_buffer_size(4 * 1024 * 1024)
+            .send_window(send_window)
+            .receive_window(VarInt::from_u32(receive_window))
             .build()
     }
 
@@ -1020,7 +1086,18 @@ impl ManagerInner {
         }
     }
 
+    /// Probe connections awaiting a reply at once. A probe is unauthenticated and cheap to
+    /// send, so the map that lets the handler answer one is bounded by count rather than by the
+    /// half-second the entry would otherwise live for.
+    const MAX_PROBE_REPLIES: usize = 1024;
+
     async fn serve_probe(self: Arc<Self>, conn: Connection, remote: SocketAddr) {
+        if self.probe_replies.len() >= Self::MAX_PROBE_REPLIES {
+            // Already answering as many probes as we will hold state for; this one is refused
+            // outright rather than queued. The server-info query is idempotent and retried.
+            conn.close(VarInt::from_u32(CLOSE_NORMAL), b"probe capacity");
+            return;
+        }
         let Ok(mut rx) = conn.accept_uni().await else { return };
         let Ok(bytes) = rx.read_to_end(4096).await else { return };
         self.probe_replies.insert(remote, conn.clone());
@@ -1033,6 +1110,22 @@ impl ManagerInner {
     }
 
     async fn serve_connect(self: Arc<Self>, conn: Connection, remote: SocketAddr) {
+        // A hard cap on connections between the QUIC handshake and a verdict. Without it the
+        // only thing limiting them is how long each waits, which is a rate, not a bound: a peer
+        // opening connections faster than they time out grows this without limit.
+        let limit = if self.transport_config.max_pending_handshakes > 0 { self.transport_config.max_pending_handshakes } else { 1024 };
+        if self.pending_handshakes.fetch_add(1, Ordering::AcqRel) >= limit {
+            self.pending_handshakes.fetch_sub(1, Ordering::AcqRel);
+            if self.handshake_overflow_logged.fetch_add(1, Ordering::Relaxed).is_multiple_of(1000) {
+                BNL::log_warning(format!(
+                    "[iroh] {limit} connections are already awaiting a connect verdict (the cap); closing the one from {remote}."
+                ));
+            }
+            conn.close(VarInt::from_u32(CLOSE_PROTOCOL), b"handshake capacity");
+            return;
+        }
+        // Released however this returns, so a panic or an early return cannot leak a slot.
+        let _slot = PendingHandshakeSlot { manager: self.clone() };
         let (tx, mut rx) = match tokio::time::timeout(Duration::from_secs(10), conn.accept_bi()).await {
             Ok(Ok(streams)) => streams,
             _ => {
@@ -1116,7 +1209,7 @@ impl ManagerInner {
         pinger.abort();
         let disconnect_data = control.await.ok().flatten();
 
-        let reason = match &error {
+        let reason = state.local_disconnect_reason.lock().take().unwrap_or_else(|| match &error {
             iroh::endpoint::ConnectionError::ApplicationClosed(closed) => {
                 match u64::from(closed.error_code) as u32 {
                     CLOSE_REJECTED => DisconnectReason::ConnectionRejected,
@@ -1128,7 +1221,7 @@ impl ManagerInner {
             iroh::endpoint::ConnectionError::TimedOut => DisconnectReason::Timeout,
             iroh::endpoint::ConnectionError::Reset => DisconnectReason::RemoteConnectionClose,
             _ => DisconnectReason::ConnectionFailed,
-        };
+        });
         self.finish_peer(state, reason, disconnect_data);
     }
 
@@ -1197,6 +1290,11 @@ impl ManagerInner {
             match next_reliable {
                 Some(Outgoing::Reliable { channel, ordered, data }) => {
                     let len = data.len();
+                    // The bytes leave the queue for the wire now: stamp the drain so the watchdog
+                    // knows the peer is still accepting reliable data. Saturating so a miscount
+                    // can never wrap the counter.
+                    state.reliable_queued_bytes.fetch_update(Ordering::AcqRel, Ordering::Acquire, |q| Some(q.saturating_sub(len))).ok();
+                    *state.last_reliable_drain.lock() = Instant::now();
                     let result = if ordered {
                         Self::send_on_ordered_stream(&state, &mut ordered_streams, channel, data).await
                     } else {
@@ -1343,12 +1441,39 @@ impl ManagerInner {
     }
 
     async fn ping_task(state: Arc<PeerState>) {
-        let interval = Duration::from_millis(BasisNetworkCommons::PING_INTERVAL as u64);
+        // Half the ping interval, so the send-queue watchdog reacts within ~grace + 750 ms
+        // rather than only on ping boundaries.
+        let interval = Duration::from_millis((BasisNetworkCommons::PING_INTERVAL as u64 / 2).max(1));
+        let grace = Duration::from_millis(u64::try_from(BasisNetworkCommons::PING_INTERVAL).unwrap_or(1500));
+        let grace = state.manager.upgrade().map(|m| m.reliable_grace()).unwrap_or(grace);
+        let mut since_last_ping = Duration::ZERO;
         loop {
             tokio::time::sleep(interval).await;
             if !state.connected.load(Ordering::Relaxed) {
                 return;
             }
+            // Watchdog: a peer whose reliable queue has been over budget for the whole grace
+            // period is not reading. Close it with a reason the server can act on, rather than
+            // keep buffering messages it will never receive.
+            let queued = state.reliable_queued_bytes.load(Ordering::Relaxed);
+            if queued > 0 && state.last_reliable_drain.lock().elapsed() >= grace {
+                BNL::log_warning(format!(
+                    "[iroh] peer {}: {queued} bytes of reliable data have not left the send queue for over {}s; disconnecting a client that is not reading.",
+                    state.id,
+                    grace.as_secs()
+                ));
+                *state.local_disconnect_reason.lock() = Some(DisconnectReason::SendQueueOverBudget);
+                state.connected.store(false, Ordering::SeqCst);
+                state.conn.close(VarInt::from_u32(CLOSE_FORCE), b"send queue over budget");
+                state.notify.notify_one();
+                return;
+            }
+            // The control-stream ping only needs the full interval; run the watchdog twice as often.
+            since_last_ping += interval;
+            if since_last_ping < Duration::from_millis(BasisNetworkCommons::PING_INTERVAL as u64) {
+                continue;
+            }
+            since_last_ping = Duration::ZERO;
             let now_ticks = utc_now_ticks();
             *state.ping_sent_at.lock() = Some((now_ticks, Instant::now()));
             let mut msg = vec![CTL_PING];
@@ -1478,6 +1603,9 @@ impl ManagerInner {
             return;
         }
         let (bulk, priority) = self.queue_limits();
+        // Bytes of the early reliable sends already sitting in the queue, so the sender's
+        // per-frame decrement stays balanced and the counter never underflows.
+        let early_reliable_bytes: usize = shared.early.lock().iter().map(|o| if let Outgoing::Reliable { data, .. } = o { data.len() } else { 0 }).sum();
         let live = Arc::new(PeerState {
             id: 0,
             remote_id: AtomicI32::new(0),
@@ -1493,6 +1621,11 @@ impl ManagerInner {
             remote_time_delta: AtomicI64::new(0),
             last_packet: Mutex::new(Instant::now()),
             reliable_queue: Mutex::new(std::mem::take(&mut *shared.early.lock())),
+            reliable_queued_bytes: AtomicUsize::new(early_reliable_bytes),
+            // A client dialling out is not a target for a queue-flood; give it the ceiling and
+            // no watchdog pressure (the server is the one that must bound a peer that stalls).
+            reliable_budget: AtomicUsize::new(0),
+            last_reliable_drain: Mutex::new(Instant::now()),
             bulk_queue: Mutex::new(VecDeque::new()),
             priority_queue: Mutex::new(VecDeque::new()),
             queued_per_channel: std::array::from_fn(|_| AtomicU32::new(0)),
@@ -1504,6 +1637,7 @@ impl ManagerInner {
             control_tx: tokio::sync::Mutex::new(None),
             ping_sent_at: Mutex::new(None),
             warned_too_large: AtomicBool::new(false),
+            local_disconnect_reason: Mutex::new(None),
         });
         *shared.slot.lock() = Some(live.clone());
         self.peers.insert(live.id, IrohNetPeer::new(live.clone()));

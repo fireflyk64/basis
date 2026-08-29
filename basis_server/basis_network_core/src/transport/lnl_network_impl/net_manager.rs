@@ -63,7 +63,19 @@ pub struct LnlSettings {
     pub enable_statistics: bool,
     pub max_unreliable_queue_per_peer: i32,
     pub max_priority_unreliable_queue_per_peer: i32,
+    /// Bytes of reliable data that may be queued for one peer before sends to it are refused.
+    /// 0 = a share of memory divided by the population.
+    pub max_reliable_queue_bytes_per_peer: i32,
+    /// How long a peer may stay over that budget before it is disconnected.
+    pub reliable_queue_grace_ms: f32,
     pub max_fragments_count: u16,
+    /// Bytes of incomplete fragment sets one peer may make the server hold.
+    pub max_fragment_bytes_per_peer: usize,
+    /// Connection requests awaiting a verdict at once.
+    pub max_pending_requests: usize,
+    /// Rejected connections the server keeps state for so the reject reason is delivered
+    /// reliably; past this a rejection is one datagram and no state.
+    pub max_reject_peers: usize,
     pub multi_socket_count: usize,
     pub reuse_address: bool,
     pub peer_update_parallelism: usize,
@@ -90,7 +102,12 @@ impl LnlSettings {
             enable_statistics,
             max_unreliable_queue_per_peer: lnl.max_unreliable_queue_per_peer,
             max_priority_unreliable_queue_per_peer: lnl.max_priority_unreliable_queue_per_peer,
+            max_reliable_queue_bytes_per_peer: lnl.max_reliable_queue_bytes_per_peer,
+            reliable_queue_grace_ms: lnl.reliable_queue_grace_ms.max(0) as f32,
             max_fragments_count: u16::MAX,
+            max_fragment_bytes_per_peer: usize::try_from(lnl.max_fragment_bytes_per_peer).ok().filter(|v| *v > 0).unwrap_or(8 * 1024 * 1024),
+            max_pending_requests: usize::try_from(lnl.max_pending_requests).ok().filter(|v| *v > 0).unwrap_or(4096),
+            max_reject_peers: usize::try_from(lnl.max_reject_peers).ok().filter(|v| *v > 0).unwrap_or(256),
             multi_socket_count: usize::try_from(lnl.multi_socket_count).unwrap_or(1).max(1),
             reuse_address: lnl.reuse_addresss,
             peer_update_parallelism: usize::try_from(lnl.peer_update_parallelism).unwrap_or(0),
@@ -138,6 +155,10 @@ pub(super) struct ManagerInner {
     effective_unreliable_queue: AtomicI32,
     effective_priority_queue: AtomicI32,
     send_failures_logged: AtomicU32,
+    /// Peers that exist only to deliver a rejection, so the cap on them can be enforced.
+    reject_peers: AtomicI32,
+    pending_request_overflow_logged: AtomicU32,
+    reject_overflow_logged: AtomicU32,
     weak_self: RwLock<Weak<ManagerInner>>,
 }
 
@@ -181,6 +202,10 @@ impl ManagerInner {
             .store(BasisPopulationScale::unreliable_queue_per_peer(self.settings.max_unreliable_queue_per_peer, peers), Ordering::Relaxed);
         self.effective_priority_queue
             .store(BasisPopulationScale::priority_queue_per_peer(self.settings.max_priority_unreliable_queue_per_peer, peers), Ordering::Relaxed);
+        let reliable_budget = usize::try_from(BasisPopulationScale::reliable_queue_bytes_per_peer(self.settings.max_reliable_queue_bytes_per_peer, peers)).unwrap_or(0);
+        for peer in self.peers_by_id.iter() {
+            peer.value().refresh_reliable_budget(reliable_budget);
+        }
     }
 
     // ── Raw sends ─────────────────────────────────────────────────────────
@@ -276,6 +301,9 @@ impl ManagerInner {
     // ── Peer table ────────────────────────────────────────────────────────
 
     fn add_peer(&self, peer: Arc<LnlPeer>) {
+        let peers = self.connected_peers_count.load(Ordering::Relaxed).max(1);
+        let reliable_budget = usize::try_from(BasisPopulationScale::reliable_queue_bytes_per_peer(self.settings.max_reliable_queue_bytes_per_peer, peers)).unwrap_or(0);
+        peer.refresh_reliable_budget(reliable_budget);
         self.peers_by_addr.insert(peer.remote(), peer.clone());
         self.peers_by_id.insert(peer.id, peer);
     }
@@ -284,6 +312,9 @@ impl ManagerInner {
         self.peers_by_addr.remove_if(&peer.remote(), |_, held| Arc::ptr_eq(held, peer));
         if self.peers_by_id.remove_if(&peer.id, |_, held| Arc::ptr_eq(held, peer)).is_some() {
             self.ids.release(peer.id);
+            if peer.take_reject_peer() {
+                self.reject_peers.fetch_sub(1, Ordering::AcqRel);
+            }
         }
         peer.recycle_queued_packets();
     }
@@ -449,6 +480,23 @@ impl ManagerInner {
                 existing.update_request(request);
                 return;
             }
+            // A hard cap, not a timeout: a connect request costs memory the moment it is
+            // recorded, and the source address of a UDP datagram can be spoofed, so an
+            // unbounded table is a one-packet-per-entry memory attack. Past the cap the
+            // request is simply not recorded — a real client resends its connect request, so a
+            // legitimate peer arriving during a flood still gets in once there is room.
+            if requests.len() >= self.settings.max_pending_requests {
+                if self.pending_request_overflow_logged.fetch_add(1, Ordering::Relaxed).is_multiple_of(1000) {
+                    NetDebug::write(
+                        NetLogLevel::Error,
+                        &format!(
+                            "[NM] {} connection requests are already awaiting a verdict (the cap); dropping the request from {remote}. Clients resend, so this is back-pressure, not a refusal.",
+                            self.settings.max_pending_requests
+                        ),
+                    );
+                }
+                return;
+            }
             let req = LnlConnectionRequest::new(self, remote, request);
             requests.insert(remote, req.clone());
             req
@@ -488,6 +536,35 @@ impl ManagerInner {
             self.requests.lock().remove(&remote);
             return None;
         }
+        // A rejection normally gets a peer object so the reject reason is retransmitted until
+        // acknowledged. That is per-rejection state a flood of bad passwords from spoofed
+        // addresses can multiply, so past a hard cap a rejection becomes one datagram and no
+        // state at all — the same thing `RejectForce` does.
+        if result == ConnectionRequestResult::Reject
+            && self.reject_peers.load(Ordering::Relaxed) >= self.settings.max_reject_peers as i32
+            && self.try_get_peer(remote).is_none()
+        {
+            if self.reject_overflow_logged.fetch_add(1, Ordering::Relaxed).is_multiple_of(1000) {
+                NetDebug::write(
+                    NetLogLevel::Error,
+                    &format!(
+                        "[NM] {} rejected connections are already holding state (the cap); refusing {remote} statelessly. The reason is sent once rather than retransmitted.",
+                        self.settings.max_reject_peers
+                    ),
+                );
+            }
+            let mut shutdown = NetPacket::with_property(PacketProperty::Disconnect, reject_data.len());
+            shutdown.set_connection_number(internal.connection_number);
+            shutdown.write_i64(1, internal.connection_time);
+            if shutdown.size() < NetConstants::POSSIBLE_MTU[0] && !reject_data.is_empty() {
+                shutdown.raw_mut()[9..].copy_from_slice(reject_data);
+            } else if !reject_data.is_empty() {
+                shutdown.truncate(PacketProperty::Disconnect.header_size());
+            }
+            self.send_raw(shutdown.raw(), remote);
+            self.requests.lock().remove(&remote);
+            return None;
+        }
         let (new_peer, raise_connected) = {
             let mut requests = self.requests.lock();
             let admitted = if let Some(existing) = self.try_get_peer(remote) {
@@ -497,6 +574,8 @@ impl ManagerInner {
                 let peer = LnlPeer::new_incoming(self, remote, self.ids.allocate());
                 peer.reject(&internal, reject_data);
                 self.add_peer(peer.clone());
+                self.reject_peers.fetch_add(1, Ordering::AcqRel);
+                peer.mark_reject_peer();
                 (peer, false)
             } else {
                 let peer = LnlPeer::new_accepted(self, &internal, remote, self.ids.allocate());
@@ -738,6 +817,7 @@ impl ManagerInner {
         }
         self.requests.lock().clear();
         self.peers_to_remove.lock().clear();
+        self.reject_peers.store(0, Ordering::SeqCst);
         if self.owns_ids {
             self.ids.reset();
         }
@@ -966,6 +1046,9 @@ impl LnlNetManager {
             effective_unreliable_queue: AtomicI32::new(0),
             effective_priority_queue: AtomicI32::new(0),
             send_failures_logged: AtomicU32::new(0),
+            reject_peers: AtomicI32::new(0),
+            pending_request_overflow_logged: AtomicU32::new(0),
+            reject_overflow_logged: AtomicU32::new(0),
             weak_self: RwLock::new(Weak::new()),
         });
         *inner.weak_self.write() = Arc::downgrade(&inner);

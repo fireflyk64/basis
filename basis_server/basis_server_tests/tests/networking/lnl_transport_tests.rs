@@ -737,7 +737,9 @@ fn a_hand_rolled_client_completes_the_handshake_and_is_answered() {
     let server = Endpoint::new(|s| s.ping_interval_ms = 100.0);
     let port = server.start();
     let client = RawClient::handshake(port);
-    assert!(wait_for(|| server.manager.connected_peers_count() == 1, HANDSHAKE_TIMEOUT));
+    // Wait on the event, not the counter: the count is bumped just before the listener is
+    // called, so a wait on the count can win the race against the vector being filled.
+    assert!(wait_for(|| !server.connected.lock().is_empty(), HANDSHAKE_TIMEOUT), "the server never raised PeerConnected");
     let server_peer = server.connected.lock()[0].clone();
     assert_eq!(server_peer.remote_id(), 7, "the id the raw client claimed");
     assert_eq!(client.remote_id, server_peer.id());
@@ -779,7 +781,7 @@ fn malformed_compact_merged_is_dropped_without_breaking_the_peer() {
     let server = Endpoint::new(|_| {});
     let port = server.start();
     let client = RawClient::handshake(port);
-    assert!(wait_for(|| server.manager.connected_peers_count() == 1, HANDSHAKE_TIMEOUT));
+    assert!(wait_for(|| !server.connected.lock().is_empty(), HANDSHAKE_TIMEOUT), "the server never raised PeerConnected");
     let malformed: Vec<Vec<u8>> = vec![
         vec![5],
         vec![0x85, 0x01],
@@ -819,7 +821,7 @@ fn well_formed_compact_runs_and_random_garbage_never_break_the_server() {
     let server = Endpoint::new(|_| {});
     let port = server.start();
     let client = RawClient::handshake(port);
-    assert!(wait_for(|| server.manager.connected_peers_count() == 1, HANDSHAKE_TIMEOUT));
+    assert!(wait_for(|| !server.connected.lock().is_empty(), HANDSHAKE_TIMEOUT), "the server never raised PeerConnected");
 
     // A well-formed run delivers every entry exactly, in order.
     let mut body = Vec::new();
@@ -885,4 +887,165 @@ fn packets_from_strangers_get_peer_not_found() {
     socket.send_to(&[PacketProperty::Channeled as u8, 0], SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)).unwrap();
     assert!(socket.recv_from(&mut buffer).is_err(), "nothing answers garbage");
     assert_eq!(server.received_count(), 0);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reliable send-queue bound: a client that stops reading costs a disconnect, not memory.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A raw client that completes the handshake and then never acknowledges anything: the server's
+/// reliable window fills, the outgoing queue grows, and the byte budget must stop it.
+#[test]
+#[serial(lnl_transport)]
+fn a_peer_that_never_reads_is_disconnected_not_buffered_without_limit() {
+    let server = Endpoint::new(|s| {
+        // A small budget and a short grace so the test is quick; the mechanism is the same at
+        // any size.
+        s.max_reliable_queue_bytes_per_peer = 256 * 1024;
+        s.reliable_queue_grace_ms = 1000.0;
+    });
+    let port = server.start();
+    // A hand-rolled client that handshakes and then goes silent — it never sends an ack, so the
+    // server's window never advances and its outgoing queue is the only thing that can grow.
+    let client = RawClient::handshake(port);
+    assert!(wait_for(|| !server.connected.lock().is_empty(), HANDSHAKE_TIMEOUT), "the server never raised PeerConnected");
+    let server_peer = server.connected.lock()[0].clone();
+
+    // Push far more than the budget of reliable data at the silent peer. Each message is 4 KiB;
+    // 256 of them is 1 MiB against a 256 KiB budget, so most are refused.
+    let message = vec![0xAB_u8; 4096];
+    let mut refused = 0;
+    let mut accepted = 0;
+    for _ in 0..256 {
+        match server_peer.send(&message, 5, DeliveryMethod::ReliableOrdered) {
+            Ok(()) => accepted += 1,
+            Err(SendError::QueueFull { budget, .. }) => {
+                assert_eq!(budget, 256 * 1024);
+                refused += 1;
+            }
+            Err(other) => panic!("unexpected send error: {other:?}"),
+        }
+    }
+    assert!(refused > 0, "the budget never refused a send: {accepted} accepted, {refused} refused");
+    // Everything the server holds for this peer is inside the budget plus one window's worth of
+    // packets already handed to the channel — nowhere near the 1 MiB it was asked to send.
+    println!("silent peer: {accepted} queued, {refused} refused against a 256 KiB budget");
+
+    // The peer stays silent, so the server disconnects it once the grace period passes rather
+    // than holding what it accepted forever.
+    assert!(
+        wait_for(|| !server.disconnected.lock().is_empty(), Duration::from_secs(8)),
+        "the server never disconnected a peer that stopped reading"
+    );
+    let (gone, reason, _) = server.disconnected.lock()[0].clone();
+    assert_eq!(reason, DisconnectReason::SendQueueOverBudget);
+    // The disconnected peer is the one the server admitted: same server-side id, and it declared
+    // the id the raw client claimed in its connect request.
+    assert_eq!(gone.id(), server_peer.id());
+    assert_eq!(gone.remote_id(), 7);
+    assert_eq!(server.manager.connected_peers_count(), 0);
+    let _ = client; // kept alive so its socket does not close early and change the reason
+}
+
+/// A peer that reads normally is never touched by the budget, however much it is sent.
+#[test]
+#[serial(lnl_transport)]
+fn a_reading_peer_is_never_disconnected_by_the_budget() {
+    let server = Endpoint::new(|s| {
+        s.max_reliable_queue_bytes_per_peer = 256 * 1024;
+        s.reliable_queue_grace_ms = 1000.0;
+    });
+    let client = Endpoint::new(|_| {});
+    let client_peer = connect_pair(&server, &client);
+    let server_peer = server.connected.lock()[0].clone();
+    // Far more than the budget, but the client is draining it as fast as it arrives.
+    let message = vec![0xCD_u8; 2000];
+    let total = 2000;
+    let mut refused = 0;
+    for i in 0..total {
+        if server_peer.send(&message, 6, DeliveryMethod::ReliableOrdered).is_err() {
+            refused += 1;
+        }
+        if i % 64 == 0 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    assert!(wait_for(|| client.received_count() >= total - refused, DELIVERY_TIMEOUT), "got {} of {}", client.received_count(), total - refused);
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(server.disconnected.lock().is_empty(), "a reading peer was disconnected by the send-queue budget");
+    assert!(client_peer.is_connected());
+    // Every message the budget did briefly refuse under a burst is a message the sender saw fail
+    // and could retry; nothing was silently dropped.
+    println!("reading peer: {refused}/{total} momentarily refused under burst, none lost");
+}
+
+// A control that the budget refuses a single message larger than the whole budget: the accounting
+// is on payload bytes, so a 4 KiB reliable message against a 1 KiB budget is refused every time,
+// deterministically, whatever the drain speed — the property the iroh path relies on too.
+#[test]
+#[serial(lnl_transport)]
+fn a_reliable_message_larger_than_the_whole_budget_is_always_refused() {
+    let server = Endpoint::new(|s| {
+        s.max_reliable_queue_bytes_per_peer = 1024;
+        s.reliable_queue_grace_ms = 60_000.0; // long, so this tests the refusal, not the watchdog
+    });
+    let client = Endpoint::new(|_| {});
+    let peer = connect_pair(&server, &client);
+    let server_peer = server.connected.lock()[0].clone();
+    // Small messages under the budget get through.
+    server_peer.send(&vec![1u8; 500], 5, DeliveryMethod::ReliableOrdered).unwrap();
+    // A message bigger than the entire budget can never fit and is refused whatever the queue state.
+    for _ in 0..5 {
+        assert!(matches!(server_peer.send(&vec![2u8; 4096], 5, DeliveryMethod::ReliableOrdered), Err(SendError::QueueFull { budget: 1024, .. })));
+    }
+    // The under-budget message still arrives; the client is unaffected.
+    assert!(wait_for(|| client.received_count() >= 1, DELIVERY_TIMEOUT));
+    assert_eq!(client.received.lock()[0].2.len(), 500);
+    let _ = peer;
+    server.manager.stop();
+    client.manager.stop();
+}
+
+/// Incomplete fragment sets are bounded by BYTES, not by set count: one set may hold 65535
+/// fragments, so the set count alone limits nothing useful. A sender that opens messages and
+/// never finishes them must be unable to pin more than its budget.
+#[test]
+#[serial(lnl_transport)]
+fn unfinished_fragment_sets_are_bounded_by_bytes() {
+    let server = Endpoint::new(|s| {
+        // 64 KiB of half-finished reassembly per peer, well under what the loop below sends.
+        s.max_fragment_bytes_per_peer = 64 * 1024;
+    });
+    let port = server.start();
+    let client = RawClient::handshake(port);
+    assert!(wait_for(|| !server.connected.lock().is_empty(), HANDSHAKE_TIMEOUT));
+
+    // Open many fragment sets and never complete any: each carries part 0 of 4, so the server
+    // holds it waiting for parts it will never get.
+    let payload = vec![0x5A_u8; 900];
+    for fragment_id in 0..400u16 {
+        let mut p = NetPacket::with_size(NetConstants::FRAGMENTED_HEADER_TOTAL_SIZE + payload.len());
+        p.set_property(PacketProperty::Channeled);
+        p.set_channel_id(2 * NetConstants::CHANNEL_TYPE_COUNT as u8 + DeliveryMethod::ReliableOrdered as u8);
+        p.set_sequence(fragment_id);
+        p.mark_fragmented();
+        p.set_fragment_id(fragment_id);
+        p.set_fragment_part(0);
+        p.set_fragments_total(4);
+        p.raw_mut()[NetConstants::FRAGMENTED_HEADER_TOTAL_SIZE..].copy_from_slice(&payload);
+        client.send(p.raw().to_vec());
+    }
+    std::thread::sleep(Duration::from_millis(400));
+
+    // 400 sets x ~910 bytes is ~356 KiB offered against a 64 KiB budget: the server dropped the
+    // excess rather than holding it, and nothing was delivered (no set ever completed).
+    assert_eq!(server.received_count(), 0, "an incomplete fragment set was delivered");
+    assert!(server.disconnected.lock().is_empty(), "the peer was disconnected rather than the fragments dropped");
+
+    // The peer is still usable: an ordinary message still gets through.
+    client.send_unreliable(1, b"still here");
+    assert!(
+        wait_for(|| server.received.lock().iter().any(|(c, _, d)| *c == 1 && d == b"still here"), DELIVERY_TIMEOUT),
+        "the peer stopped working after its fragment budget was reached"
+    );
 }

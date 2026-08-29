@@ -39,11 +39,23 @@ basis_xml_config! {
         pub peer_update_peers_per_worker: i32 = 0 => "PeerUpdatePeersPerWorker" [Int],
         pub max_unreliable_queue_per_peer: i32 = 0 => "MaxUnreliableQueuePerPeer" [Int],
         pub max_priority_unreliable_queue_per_peer: i32 = 0 => "MaxPriorityUnreliableQueuePerPeer" [Int],
+        /// Bytes of reliable messages that may be queued for one peer before sends to it are
+        /// refused. 0 = a share of the box's memory divided by the population.
+        pub max_reliable_queue_bytes_per_peer: i32 = 0 => "MaxReliableQueueBytesPerPeer" [Int],
+        /// How long a peer may stay over that budget before it is disconnected for not reading.
+        pub reliable_queue_grace_ms: i32 = 5000 => "ReliableQueueGraceMs" [Int],
+        /// Bytes of partial fragment sets one peer may make the server hold. 0 = 8 MiB.
+        pub max_fragment_bytes_per_peer: i32 = 0 => "MaxFragmentBytesPerPeer" [Int],
+        /// Connection requests awaiting a verdict at once. 0 = 4096.
+        pub max_pending_requests: i32 = 0 => "MaxPendingRequests" [Int],
+        /// Rejected connections kept alive to deliver their reject reason reliably; past this a
+        /// rejection is one datagram and no state. 0 = 256.
+        pub max_reject_peers: i32 = 0 => "MaxRejectPeers" [Int],
     }
 }
 impl LNLTransportConfig {
     /// Bump to force existing files to be rewritten; newly-added fields are healed automatically on load.
-    pub const CURRENT_CONFIG_VERSION: i32 = 10;
+    pub const CURRENT_CONFIG_VERSION: i32 = 11;
 
     /// Values written by version 7 and earlier that version 8 replaces with auto-scaling.
     const LEGACY_MAX_UNRELIABLE_QUEUE_PER_PEER: i32 = 256;

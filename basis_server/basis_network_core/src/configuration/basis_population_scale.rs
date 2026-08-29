@@ -24,6 +24,15 @@ impl BasisPopulationScale {
     pub const MIN_PRIORITY_QUEUE_PER_PEER: i32 = 1024;
     /// Ceiling for the per-peer voice bound.
     pub const MAX_PRIORITY_QUEUE_PER_PEER: i32 = 8192;
+    /// Share of memory the RELIABLE send queues may occupy at their bound — the bytes queued
+    /// for peers that are not reading. This is the bound that turns a stalled or hostile
+    /// client from a memory leak into a disconnect.
+    pub const RELIABLE_QUEUE_MEMORY_SHARE: f64 = 0.10;
+    /// Floor for the per-peer reliable byte budget: enough for a join snapshot plus a burst of
+    /// avatar changes and chat to a slow client.
+    pub const MIN_RELIABLE_QUEUE_BYTES_PER_PEER: i32 = 256 * 1024;
+    /// Ceiling for the per-peer reliable byte budget.
+    pub const MAX_RELIABLE_QUEUE_BYTES_PER_PEER: i32 = 8 * 1024 * 1024;
 
     /// Memory the process believes it can use — the container limit when there is one, physical
     /// RAM otherwise. Read once and cached.
@@ -88,6 +97,17 @@ impl BasisPopulationScale {
         Self::clamp(budget_packets / peers, Self::MIN_PRIORITY_QUEUE_PER_PEER, Self::MAX_PRIORITY_QUEUE_PER_PEER)
     }
 
+    /// Per-peer budget, in bytes, for reliable messages queued but not yet delivered — sends
+    /// past it are refused and a peer that stays past it is disconnected. `configured` > 0 wins.
+    pub fn reliable_queue_bytes_per_peer(configured: i32, peers: i32) -> i32 {
+        if configured > 0 {
+            return configured;
+        }
+        let peers = peers.max(1) as i64;
+        let budget_bytes = (Self::available_memory_bytes() as f64 * Self::RELIABLE_QUEUE_MEMORY_SHARE) as i64;
+        Self::clamp(budget_bytes / peers, Self::MIN_RELIABLE_QUEUE_BYTES_PER_PEER, Self::MAX_RELIABLE_QUEUE_BYTES_PER_PEER)
+    }
+
     /// Ceiling on the scaled packet pool: sized to take back everything the queues can let go of.
     pub fn packet_pool_max(configured: i32, peers: i32, per_peer: i32) -> i32 {
         if configured > 0 {
@@ -126,5 +146,30 @@ impl BasisPopulationScale {
             Self::packet_pool_max(0, peers, pool_per_peer),
             Self::slice_cap(0, peers)
         )
+    }
+}
+
+#[cfg(test)]
+mod reliable_budget_tests {
+    use super::BasisPopulationScale as P;
+    use serial_test::serial;
+
+    #[test]
+    #[serial(population_scale)]
+    fn reliable_budget_is_a_memory_share_divided_by_population_within_floor_and_ceiling() {
+        // 8 GiB box: 10% = ~819 MiB for reliable queues across all peers.
+        P::override_available_memory_for_tests(8 * 1024 * 1024 * 1024);
+        // A configured value wins outright.
+        assert_eq!(P::reliable_queue_bytes_per_peer(1_000_000, 500), 1_000_000);
+        // At a handful of peers the per-peer share is huge, so the ceiling clamps it.
+        assert_eq!(P::reliable_queue_bytes_per_peer(0, 1), P::MAX_RELIABLE_QUEUE_BYTES_PER_PEER);
+        // At a large population the share shrinks toward the floor and never below it.
+        assert_eq!(P::reliable_queue_bytes_per_peer(0, 100_000), P::MIN_RELIABLE_QUEUE_BYTES_PER_PEER);
+        // In between it tracks the division: 819 MiB / 2000 ~= 429 KiB, inside the band.
+        let mid = P::reliable_queue_bytes_per_peer(0, 2000);
+        assert!(mid > P::MIN_RELIABLE_QUEUE_BYTES_PER_PEER && mid < P::MAX_RELIABLE_QUEUE_BYTES_PER_PEER, "mid was {mid}");
+        // Monotonic: more players, no more per peer.
+        assert!(P::reliable_queue_bytes_per_peer(0, 4000) <= mid);
+        P::override_available_memory_for_tests(0);
     }
 }

@@ -705,3 +705,57 @@ fn per_peer_id_cap_limits_one_client_but_not_others_or_existing_ids() {
     assert!(stored("net:greedy:after-rejoin").is_some());
     BasisNetworkIDDatabase::reset();
 }
+
+/// The ownership table is keyed by strings the client picks and only emptied when the owner
+/// leaves, so the per-player cap is the only thing bounding it. It is deliberately huge — a
+/// player managing a large scene owns every prop in it — so this drives a small configured cap
+/// rather than the shipped one.
+#[test]
+#[serial(network_statics)]
+fn owned_objects_are_capped_per_player_and_the_count_is_released_again() {
+    BasisNetworkOwnership::reset();
+    NetworkServer::set_configuration(Configuration { max_owned_objects_per_player: 8, ..Configuration::default() });
+
+    // Up to the cap is allowed, and the count tracks it.
+    for i in 0..8 {
+        assert!(BasisNetworkOwnership::add_ownership(&format!("object-{i}"), 42), "claim {i} was refused below the cap");
+    }
+    assert_eq!(BasisNetworkOwnership::owned_count(42), 8);
+    // Past it, refused — the table stops growing however many ids the client invents.
+    for i in 8..64 {
+        assert!(!BasisNetworkOwnership::add_ownership(&format!("object-{i}"), 42), "claim {i} was accepted past the cap");
+    }
+    assert_eq!(BasisNetworkOwnership::ownership_by_object_id().len(), 8);
+
+    // Another player has its own budget: the cap is per player, not global.
+    assert!(BasisNetworkOwnership::add_ownership("other-players-object", 43));
+    assert_eq!(BasisNetworkOwnership::owned_count(43), 1);
+
+    // Releasing an object gives the budget back, so a player that cleans up can claim again.
+    assert!(BasisNetworkOwnership::remove_object("object-0"));
+    assert_eq!(BasisNetworkOwnership::owned_count(42), 7);
+    assert!(BasisNetworkOwnership::add_ownership("object-fresh", 42));
+    assert_eq!(BasisNetworkOwnership::owned_count(42), 8);
+
+    // A transfer moves the count with the object rather than double-charging either side.
+    assert!(BasisNetworkOwnership::switch_ownership("object-fresh", 43));
+    assert_eq!(BasisNetworkOwnership::owned_count(42), 7);
+    assert_eq!(BasisNetworkOwnership::owned_count(43), 2);
+
+    // And a player leaving returns everything it held.
+    BasisNetworkOwnership::remove_player_ownership(42);
+    assert_eq!(BasisNetworkOwnership::owned_count(42), 0);
+    assert_eq!(BasisNetworkOwnership::owned_count(43), 2);
+
+    BasisNetworkOwnership::reset();
+    assert_eq!(BasisNetworkOwnership::owned_count(43), 0);
+    NetworkServer::clear_configuration();
+}
+
+/// The shipped ceiling is large enough for a player who manages a whole scene; this pins that it
+/// is not accidentally lowered to something a legitimate builder would hit.
+#[test]
+fn the_shipped_owned_object_cap_is_large_enough_for_a_scene() {
+    let shipped = Configuration::default().max_owned_objects_per_player;
+    assert!(shipped >= 100_000, "the per-player ownership cap shipped at {shipped}, too low for a large managed scene");
+}

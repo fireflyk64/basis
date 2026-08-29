@@ -12,6 +12,7 @@ mod csharp_interop_tests;
 mod hello_world_peer_message_tests;
 mod hello_world_peer_stress_tests;
 mod idle_suppression_tests;
+mod iroh_reliable_bound_tests;
 mod join_broadcast_tests;
 mod join_fill_size_benchmark;
 mod join_snapshot_tier_tests;

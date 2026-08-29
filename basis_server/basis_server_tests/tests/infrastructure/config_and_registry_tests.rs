@@ -170,8 +170,12 @@ fn defaults_rest_api_and_diagnostics() {
 
 #[test]
 fn defaults_versioning_and_folder_constants() {
-    // 13: added LogConnectionHandshake; the per-connection auth chatter is now off by default.
-    assert_eq!(Configuration::CURRENT_CONFIG_VERSION, 13);
+    // 14: added MaxOwnedObjectsPerPlayer, the bound on the ownership table (ids are client
+    // strings that only leave when the owner disconnects).
+    assert_eq!(Configuration::CURRENT_CONFIG_VERSION, 14);
+    // Deliberately huge: a player who manages a whole scene owns every prop in it, so this is a
+    // backstop against a client claiming ids in a loop, not a budget anyone should reach.
+    assert!(Configuration::default().max_owned_objects_per_player >= 100_000);
     assert_eq!(Configuration::default().config_version, 0);
     assert_eq!(Configuration::CONFIG_FOLDER_NAME, "config");
     assert_eq!(Configuration::LOGS_FOLDER_NAME, "logs");
@@ -307,8 +311,15 @@ fn environmental_overrides_apply_by_field_name_and_reject_unparseable_values() {
 #[test]
 fn lnl_transport_config_defaults() {
     let cfg = LNLTransportConfig::default();
-    // 10: added MaxPriorityUnreliableQueuePerPeer, which splits voice out of the bulk queue.
-    assert_eq!(LNLTransportConfig::CURRENT_CONFIG_VERSION, 10);
+    // 11: added the bounds that keep a client from making the server buffer without limit —
+    // the reliable byte budget and its grace, the fragment byte budget, and the caps on pending
+    // requests and rejected connections.
+    assert_eq!(LNLTransportConfig::CURRENT_CONFIG_VERSION, 11);
+    assert_eq!(cfg.max_reliable_queue_bytes_per_peer, 0); // 0 = auto from population + memory
+    assert_eq!(cfg.reliable_queue_grace_ms, 5000);
+    assert_eq!(cfg.max_fragment_bytes_per_peer, 0); // 0 = 8 MiB
+    assert_eq!(cfg.max_pending_requests, 0); // 0 = 4096
+    assert_eq!(cfg.max_reject_peers, 0); // 0 = 256
     assert_eq!(cfg.max_priority_unreliable_queue_per_peer, 0); // 0 = auto from population + memory
     assert!(cfg.compact_merged);
     assert_eq!(cfg.max_send_sockets, 0); // 0 = auto: half the cores, 4 to 64
