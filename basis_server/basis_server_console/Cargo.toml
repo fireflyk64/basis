@@ -22,6 +22,13 @@ num_cpus.workspace = true
 libc.workspace = true
 sysinfo.workspace = true
 pprof = { version = "0.15.0", features = ["flamegraph"], optional = true }
+# Measured, not assumed: 7 paired 200-player runs put mimalloc 3.7 % below glibc in
+# server CPU per packet on the iroh path (jemalloc was worse on both). See irohplan.md item 1.
+mimalloc = { version = "0.1.52", default-features = false, optional = true }
 
 [features]
+# Build with --no-default-features to fall back to the system allocator, which is what
+# heaptrack, valgrind and ASAN want to see.
+default = ["mimalloc"]
+mimalloc = ["dep:mimalloc"]
 pprof = ["dep:pprof"]

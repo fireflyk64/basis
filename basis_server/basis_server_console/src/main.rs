@@ -7,6 +7,17 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable))]
 #![deny(unused_must_use)]
 
+// The process allocator. glibc's malloc showed up as 18.5 % of samples under an iroh crowd and
+// 16.4 % under a LiteNetLib one (`benchmarks/results/2026-08-29-iroh-profile/`): the QUIC stack
+// allocates per transmit and per connection event, and no amount of pooling inside this
+// repository reaches those allocations. Seven paired 200-player runs put mimalloc 3.7 % below
+// glibc in server CPU per delivered packet, for about 19 MB more resident; jemalloc was worse
+// than both and was dropped. `--no-default-features` restores the system allocator for the
+// tools that need to see it (heaptrack, valgrind, ASAN).
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod basis_console_commands;
 mod basis_console_driver;
 mod basis_first_boot_tuning;
