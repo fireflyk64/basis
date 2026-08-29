@@ -115,3 +115,25 @@ enforced by the fixed-capacity queues themselves (a recycle into a full shard fr
   level (`QueuedMessagePool`); its inner buffers were not touched.
 * Validate on the many-core box alongside the planned end-to-end run; on 2 cores the
   end-to-end benchmark measures scheduling more than allocation.
+
+## Regression check: end-to-end on the two-core rig (same day, post-merge)
+
+The pooled build was re-run through the full server comparison at 100/200 players — legacy and
+all-iroh crowds — against fresh C# baselines, with a same-hour A/B against the pre-pooling
+`developer` console at the one rung that moved.
+
+| rung | recorded (pre-pool) | pooling pass 1 / 2 | developer, same hour | verdict |
+|---|---|---|---|---|
+| C# legacy 100 / 200 | 0.231 / 0.405 | 0.227 / 0.408 | — | baseline reproduces ±2 % |
+| Rust legacy 100 | 0.276 | 0.272 | — | no regression |
+| Rust legacy 200 | 0.363 | 0.382 / 0.377 | **0.369 / 0.377** | ≤ 2 % on overlapping samples — box drift, not the pool |
+| Rust all-iroh 100 | 0.322 | 0.317 | — | no regression |
+| Rust all-iroh 200 | ~0.70 | 0.529 / 0.611 | — | no regression (rung swings ±8 %; both runs below the record) |
+
+Delivery 1.0, 83.33 Hz/pair, zero drops, voice ≥ 99.3 %, zero overrun on every run of every
+build. The one real, expected cost: resident memory is up ~10 MB at 100 players and ~20–24 MB
+at 200 (46.7 / 74.9–80.0 MB vs 37 / 55–56 MB) — the bounded reservoir plus 2 KB-capacity
+buffers standing in for smaller exact-size ones while queued — and tick time at 200 reads
+2.24 ms vs 2.03–2.10 ms on the A/B (overrun still 0). As predicted, a one-core box cannot see
+the allocation win end-to-end; the pool's case at scale rests on the microbenchmarks above and
+the many-core run.
