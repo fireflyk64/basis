@@ -34,7 +34,11 @@ use basis_network_core::transport::{BasisNetworkStackRegistry, IrohNetManager};
 use parking_lot::Mutex;
 
 /// Bumped when the exported functions or structs change shape; the C# side checks it first.
-pub const ABI_VERSION: u32 = 1;
+/// 2 added `basis_iroh_manager_send_unconnected`, which a server needs to answer the
+/// server-info probe. A host built against 1 will refuse to load this library, which is the
+/// intent: the ABI check exists so a stale native library fails loudly at start rather than at
+/// the first missing entry point.
+pub const ABI_VERSION: u32 = 2;
 
 pub const OK: i32 = 0;
 /// A handle that names nothing (destroyed, never created, or a peer that has gone away).
@@ -697,6 +701,66 @@ pub unsafe extern "C" fn basis_iroh_peer_info(handle: u64, peer: u64, out: *mut 
             // SAFETY: out was checked non-null.
             unsafe { *out = info };
             OK
+        })
+    })
+}
+
+/// Answers an unconnected message — the server-info probe — on the connection the probe arrived
+/// on. `ip`/`ip_len` and `port` identify the probe, and must be the values the
+/// `ReceiveUnconnected` event carried; the transport holds that connection open briefly for
+/// exactly this reply.
+///
+/// Returns `OK` when the reply was handed to the transport, `ERR_TRANSPORT` when there was no
+/// probe waiting at that address (it timed out, or the address does not match).
+///
+/// # Safety
+/// `ip` must point to `ip_len` readable bytes (4 or 16) and `data` to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn basis_iroh_manager_send_unconnected(
+    handle: u64,
+    ip: *const u8,
+    ip_len: u8,
+    port: u16,
+    data: *const u8,
+    len: usize,
+) -> i32 {
+    guarded(|| {
+        let address = match ip_len {
+            4 => {
+                if ip.is_null() {
+                    set_last_error("ip was null");
+                    return ERR_BAD_ARGUMENT;
+                }
+                // SAFETY: ip_len says four readable bytes; checked non-null above.
+                let octets = unsafe { slice_from(ip, 4) };
+                IpAddr::V4(std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
+            }
+            16 => {
+                if ip.is_null() {
+                    set_last_error("ip was null");
+                    return ERR_BAD_ARGUMENT;
+                }
+                // SAFETY: ip_len says sixteen readable bytes; checked non-null above.
+                let octets = unsafe { slice_from(ip, 16) };
+                let mut bytes = [0u8; 16];
+                bytes.copy_from_slice(octets);
+                IpAddr::V6(std::net::Ipv6Addr::from(bytes))
+            }
+            other => {
+                set_last_error(format!("ip_len must be 4 or 16, got {other}"));
+                return ERR_BAD_ARGUMENT;
+            }
+        };
+        // SAFETY: the caller promises len readable bytes at data; an empty reply is allowed.
+        let payload = unsafe { slice_from(data, len) };
+        with_manager(handle, |m| {
+            let writer = NetDataWriter::from_slice(payload);
+            if m.manager.send_unconnected_message(&writer, SocketAddr::new(address, port)) {
+                OK
+            } else {
+                set_last_error(format!("no probe from {address}:{port} was waiting for a reply"));
+                ERR_TRANSPORT
+            }
         })
     })
 }

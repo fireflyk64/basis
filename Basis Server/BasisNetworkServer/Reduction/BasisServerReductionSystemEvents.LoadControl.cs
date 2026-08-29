@@ -1,4 +1,4 @@
-using Basis.Network.Core;
+﻿using Basis.Network.Core;
 using System;
 using System.Diagnostics;
 using System.Threading;
@@ -28,6 +28,10 @@ namespace BasisNetworkServer.BasisNetworkingReductionSystem
             _lastRebalanceTick = nowTick;
 
             double peerPressure = 0;
+            // Null on the iroh stack, whose peer loop lives in the native library and publishes no
+            // pressure counters. The allocator then steers on tick duty alone: still correct, but
+            // blind to a transport that is falling behind, so an iroh deployment should be watched
+            // on the health document's tick timings rather than assumed to self-balance.
             LiteNetLib.NetManager lnl = (NetworkServer.Server as LNLNetManager)?.manager;
             if (lnl != null)
             {

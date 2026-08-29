@@ -83,7 +83,17 @@ namespace BasisNetworkServer
             var manager = (NetworkServer.Server as LNLNetManager)?.manager;
             if (manager == null)
             {
-                BNL.LogError("[P2P] NetManager not initialised or active stack is not LiteNetLib, cannot start P2P broker.");
+                // Direct links are introduced through LiteNetLib's NAT punch module. On the iroh
+                // stack there is no such module here, so every pair stays relayed by the server —
+                // a capability difference the operator should see stated, not an error.
+                if (NetworkServer.Server != null)
+                {
+                    BNL.Log("[P2P] The active network stack does not offer direct peer connections; the server relays for every pair.");
+                }
+                else
+                {
+                    BNL.LogError("[P2P] NetManager not initialised, cannot start P2P broker.");
+                }
                 return;
             }
 

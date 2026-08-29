@@ -152,6 +152,18 @@ namespace Basis.Network.Server
                 if (NetworkServer.Configuration.EnableStatistics && NetworkServer.Server != null)
                 {
                     int visitors = NetworkServer.Server.ConnectedPeersCount;
+                    // Where each transport is reachable, so a tool holding only the health URL can
+                    // find the listener. Same field names the Rust server emits, so the benchmark
+                    // harness and any launcher read both servers with one parser.
+                    string listeners =
+                        $",\"stack\":\"{NetworkServer.ActiveStackId}\"" +
+                        (NetworkServer.Server is LNLNetManager
+                            ? $",\"legacyPort\":{NetworkServer.Configuration.SetPort}"
+                            : "") +
+                        (NetworkServer.IrohConnectionString.Length > 0
+                            ? $",\"iroh\":\"{NetworkServer.IrohConnectionString}\""
+                            : "");
+
                     long sent = NetworkServer.Server.Statistics.BytesSent;
                     long recv = NetworkServer.Server.Statistics.BytesReceived;
                     int capacity = NetworkServer.Configuration.PeerLimit;
@@ -191,6 +203,7 @@ namespace Basis.Network.Server
                         $"\"currentTime\":\"{nowUtc:O}\"," +
                         $"\"startTime\":\"{startTimeUtc:O}\"," +
                         $"\"version\":\"{BasisNetworkVersion.ServerVersion}\"" +
+                        listeners +
                         gc +
                         bsr +
                         "}";

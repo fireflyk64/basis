@@ -1,4 +1,4 @@
-using Basis.Network.Core;
+﻿using Basis.Network.Core;
 using Basis.Network.Core.Compression;
 using Basis.Network.Server;
 using Basis.Network.Server.Auth;
@@ -273,11 +273,62 @@ public static class NetworkServer
     public static void SetupServer(Configuration configuration)
     {
         Listener = new EventBasedNetListener();
-        Server = BasisNetworkStackRegistry.Create(configuration.NetworkStackId, Listener, configuration);
+
+        // One transport for the life of the process, chosen by NetworkStackId in config.xml:
+        // empty or "litenetlib" is the UDP protocol every shipped client speaks, "iroh" is QUIC
+        // through the basis_iroh_ffi native library. This server does not run both at once - a
+        // deployment picks one and restarts to change it.
+        string requested = string.IsNullOrWhiteSpace(configuration.NetworkStackId)
+            ? BasisNetworkStackRegistry.DefaultId
+            : configuration.NetworkStackId.Trim();
+
+        // The registry answers an unknown id with a warning and the default stack. That is right
+        // for a client, which should still reach a server after a bad launch argument, and wrong
+        // here: a typo in config.xml would leave the deployment serving a protocol nobody asked
+        // for, looking healthy, and turning away the clients it was reconfigured for.
+        if (!BasisNetworkStackRegistry.IsRegistered(requested))
+        {
+            string known = string.Join(", ", BasisNetworkStackRegistry.Stacks.Select(s => s.Id));
+            throw new InvalidOperationException(
+                $"NetworkStackId '{requested}' is not a network stack this build knows. Known stacks: {known}.");
+        }
+
+        try
+        {
+            Server = BasisNetworkStackRegistry.Create(requested, Listener, configuration);
+        }
+        catch (Exception ex)
+        {
+            // A missing or stale native library, a failed ABI check. Falling back to the other
+            // stack would silently serve a protocol the operator did not ask for and that their
+            // clients may not speak, so this stops instead.
+            throw new InvalidOperationException(
+                $"The '{requested}' network stack could not be created: {ex.Message}. " +
+                (requested.Equals(BasisNetworkStackRegistry.IrohId, StringComparison.OrdinalIgnoreCase)
+                    ? "The iroh stack needs the basis_iroh_ffi native library beside the server binary, built from the Rust workspace with `cargo build --release -p basis_iroh_ffi`. "
+                    : "") +
+                "Set NetworkStackId in config.xml to a stack this build can create.", ex);
+        }
+
+        if (Server == null)
+        {
+            throw new InvalidOperationException($"The '{requested}' network stack could not be created.");
+        }
 
         NetDebug.Logger = new BasisServerLogger();
         StartListening(configuration);
     }
+
+    /// <summary>
+    /// Where clients reach this server, for the boot log and the health document. LiteNetLib
+    /// clients need the UDP port; iroh clients need the endpoint id, which is not derivable from
+    /// the port and is therefore the one thing an operator must be told.
+    /// </summary>
+    public static string IrohConnectionString =>
+        Server is IrohNetManager iroh ? iroh.ConnectionString : string.Empty;
+
+    /// <summary>The id of the stack actually in use: "litenetlib" or "iroh".</summary>
+    public static string ActiveStackId => BasisNetworkStackRegistry.ActiveStackId;
 
     public static void StartListening(Configuration configuration)
     {
@@ -315,6 +366,14 @@ public static class NetworkServer
         BNL.Log($"Listening on UDP port {configuration.SetPort}");
         BNL.Log($"  IPv4 bind: {ipv4}");
         BNL.Log($"  IPv6 bind: [{ipv6}]");
+        BNL.Log($"  network stack: {ActiveStackId}");
+        if (Server is IrohNetManager irohServer)
+        {
+            // Without this line nobody can connect: an iroh client dials an endpoint id, and the
+            // id is generated from the secret key file rather than being implied by the port.
+            BNL.Log($"  iroh clients: {irohServer.ConnectionString}");
+            BNL.Log("  direct peer-to-peer links are not offered on this stack; the server relays for every peer.");
+        }
     }
     #endregion
     public static void BroadcastMessageToClients(NetDataWriter writer, byte channel, NetPeer sender, ReadOnlySpan<NetPeer> clients, DeliveryMethod deliveryMethod = DeliveryMethod.Sequenced, int maxMessages = 70)

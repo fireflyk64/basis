@@ -17,7 +17,7 @@ namespace Basis.Network.Core
     internal static class IrohNative
     {
         public const string Library = "basis_iroh_ffi";
-        public const uint AbiVersion = 1;
+        public const uint AbiVersion = 2;
 
         public const int Ok = 0;
         public const int ErrNoHandle = -1;
@@ -118,6 +118,7 @@ namespace Basis.Network.Core
         [DllImport(Library, EntryPoint = "basis_iroh_peer_release")] public static extern int PeerRelease(ulong handle, ulong peer);
         [DllImport(Library, EntryPoint = "basis_iroh_request_accept")] public static extern int RequestAccept(ulong handle, ulong request, out ulong peer);
         [DllImport(Library, EntryPoint = "basis_iroh_request_reject")] public static extern int RequestReject(ulong handle, ulong request, byte[] data, UIntPtr len);
+        [DllImport(Library, EntryPoint = "basis_iroh_manager_send_unconnected")] public static extern int ManagerSendUnconnected(ulong handle, byte[] ip, byte ipLen, ushort port, byte[] data, UIntPtr len);
 
         public static string LastError()
         {
@@ -465,9 +466,29 @@ namespace Basis.Network.Core
             return PeerFor(peer);
         }
 
+        /// <summary>
+        /// Answers a server-info probe on the connection it arrived on.
+        ///
+        /// <para>QUIC has no unconnected traffic, so a probe is a short connection under its own
+        /// ALPN which the transport holds open briefly for exactly this reply. That makes the
+        /// contract narrower than LiteNetLib's: this can only answer an address a
+        /// <c>NetworkReceiveUnconnected</c> event just reported, and returns false for anything
+        /// else rather than sending a datagram into the void.</para>
+        /// </summary>
         public bool SendUnconnectedMessage(NetDataWriter writer, IPEndPoint remoteEndPoint)
         {
-            // iroh has no unconnected datagrams; the server-info probe for this stack is the REST health check.
+            if (Handle == 0 || remoteEndPoint == null) return false;
+            byte[] ip = remoteEndPoint.Address.GetAddressBytes();
+            byte[] payload = writer?.Data ?? Array.Empty<byte>();
+            int length = writer?.Length ?? 0;
+            int code = IrohNative.ManagerSendUnconnected(Handle, ip, (byte)ip.Length, (ushort)remoteEndPoint.Port, payload, (UIntPtr)length);
+            if (code == IrohNative.Ok) return true;
+            // A probe that timed out before the handler answered is ordinary, not an error worth
+            // a log line per probe; anything else is worth saying once.
+            if (code != IrohNative.ErrTransport && code != IrohNative.ErrNoHandle)
+            {
+                BNL.LogWarning($"iroh unconnected send failed: {IrohNative.LastError()}");
+            }
             return false;
         }
 
