@@ -46,4 +46,57 @@ public static partial class SerializableBasis
             }
         }
     }
+
+    /// <summary>
+    /// Client → server on the P2P channel under P2PSub_IntroduceRequest: this side's transport
+    /// address (the iroh endpoint address as JSON) for one session.
+    /// Wire: [sessionToken:string][addr:bytesWithLength]
+    /// </summary>
+    public struct BasisP2PIntroduceRequest
+    {
+        public string sessionToken;
+        public byte[] endpointAddr;
+
+        public void Deserialize(NetDataReader reader)
+        {
+            sessionToken = reader.GetString(BasisP2PSignalMessage.MaxTokenLength);
+            endpointAddr = reader.GetBytesWithLength();
+        }
+
+        public void Serialize(NetDataWriter writer)
+        {
+            writer.Put(sessionToken ?? string.Empty, BasisP2PSignalMessage.MaxTokenLength);
+            writer.PutBytesWithLength(endpointAddr ?? System.Array.Empty<byte>());
+        }
+    }
+
+    /// <summary>
+    /// Server → client on the P2P channel under P2PSub_Introduce: the other side's endpoint
+    /// address for this session, plus which of the two the receiver is (so exactly one side dials).
+    /// Wire: [sessionToken:string][otherPlayerId:ushort][dial:1][addr:bytesWithLength]
+    /// </summary>
+    public struct BasisP2PIntroduce
+    {
+        public string sessionToken;
+        public ushort otherPlayerId;
+        /// <summary>True for the side that should open the connection; the other side accepts.</summary>
+        public bool dial;
+        public byte[] endpointAddr;
+
+        public void Deserialize(NetDataReader reader)
+        {
+            sessionToken = reader.GetString(BasisP2PSignalMessage.MaxTokenLength);
+            otherPlayerId = reader.GetUShort();
+            dial = reader.GetBool();
+            endpointAddr = reader.GetBytesWithLength();
+        }
+
+        public void Serialize(NetDataWriter writer)
+        {
+            writer.Put(sessionToken ?? string.Empty, BasisP2PSignalMessage.MaxTokenLength);
+            writer.Put(otherPlayerId);
+            writer.Put(dial);
+            writer.PutBytesWithLength(endpointAddr ?? System.Array.Empty<byte>());
+        }
+    }
 }

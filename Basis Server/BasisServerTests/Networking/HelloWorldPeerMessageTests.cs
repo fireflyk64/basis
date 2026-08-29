@@ -35,6 +35,10 @@ public sealed class HelloWorldServerFixture : IDisposable
     {
         Port = FindFreeUdpPort();
 
+        // This fixture boots the C# server, which speaks LiteNetLib; the hello clients default to
+        // the iroh stack of the Rust server, so point them back here for the in-process run.
+        BasisHelloClient.NetworkStackId = BasisNetworkStackRegistry.LiteNetLibId;
+
         NetworkServer.StartServer(new Configuration
         {
             SetPort = (ushort)Port,

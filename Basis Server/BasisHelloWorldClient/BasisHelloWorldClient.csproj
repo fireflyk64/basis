@@ -26,7 +26,21 @@
 		<ProjectReference Include="..\BasisNetworkCore\BasisNetworkCore.csproj" />
 		<ProjectReference Include="..\Contrib\Auth\Did\Did.csproj" />
 		<ProjectReference Include="..\Contrib\Crypto\Crypto.csproj" />
-		<ProjectReference Include="..\LiteNetLib\LiteNetLib.csproj" />
+	</ItemGroup>
+
+	<!--
+	  The iroh transport lives in the basis_iroh_ffi native library, built from the Rust workspace
+	  (`cargo build --release -p basis_iroh_ffi`). It is copied beside the executable when it is
+	  found; point BasisIrohFfiDir somewhere else for a build that lives elsewhere. Without it the
+	  clients can still run on LiteNetLib with `--stack litenetlib`.
+	-->
+	<PropertyGroup>
+		<BasisIrohFfiDir Condition="'$(BasisIrohFfiDir)' == ''">$(MSBuildThisFileDirectory)../../basis_server/target/release/</BasisIrohFfiDir>
+	</PropertyGroup>
+	<ItemGroup>
+		<None Include="$(BasisIrohFfiDir)libbasis_iroh_ffi.so" Condition="Exists('$(BasisIrohFfiDir)libbasis_iroh_ffi.so')" Link="libbasis_iroh_ffi.so" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="$(BasisIrohFfiDir)libbasis_iroh_ffi.dylib" Condition="Exists('$(BasisIrohFfiDir)libbasis_iroh_ffi.dylib')" Link="libbasis_iroh_ffi.dylib" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="$(BasisIrohFfiDir)basis_iroh_ffi.dll" Condition="Exists('$(BasisIrohFfiDir)basis_iroh_ffi.dll')" Link="basis_iroh_ffi.dll" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
 </Project>

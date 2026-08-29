@@ -46,6 +46,13 @@ namespace Basis.HelloWorld
         /// </summary>
         public const ushort HelloMessageIndex = 0xE0C0;
 
+        /// <summary>
+        /// The network stack every hello client is created on. iroh — the Rust server's transport,
+        /// reached through the basis_iroh_ffi native library beside the executable — unless a
+        /// caller points it at LiteNetLib to talk to the legacy C# server.
+        /// </summary>
+        public static string NetworkStackId = BasisNetworkStackRegistry.IrohId;
+
         private const byte KindNumber = 0;
         private const byte KindText = 1;
 
@@ -148,6 +155,7 @@ namespace Basis.HelloWorld
             }
 
             _client.listener.NetworkReceiveEvent += OnReceive;
+            OnTransportReady(_client.client, _client.listener);
             _pumping = true;
             Pump.Add(this);
 
@@ -213,6 +221,17 @@ namespace Basis.HelloWorld
         /// <summary>The connection to the server, for a subclass that needs to signal on it.</summary>
         protected NetPeer? ServerPeer => _peer;
 
+        /// <summary>The transport itself, for a subclass that opens direct links on the same endpoint.</summary>
+        protected NetManager? Transport => _client?.client;
+
+        /// <summary>
+        /// Called once the server connection exists and the receive handler is attached, so a
+        /// subclass can subscribe to the other listener events before the first tick.
+        /// </summary>
+        protected virtual void OnTransportReady(NetManager transport, EventBasedNetListener listener)
+        {
+        }
+
         /// <summary>Where the server is. A NAT-punch introduce request has to be addressed to it by name.</summary>
         protected string ServerHost { get; private set; } = string.Empty;
 
@@ -258,6 +277,14 @@ namespace Basis.HelloWorld
         {
             try
             {
+                // Direct links share the endpoint with the server connection, so a message from
+                // any other peer is a subclass's business.
+                if (_peer != null && !peer.Equals(_peer))
+                {
+                    HandlePeerMessage(peer, reader, channel);
+                    return;
+                }
+
                 switch (channel)
                 {
                     case BasisNetworkCommons.AuthIdentityChannel:
@@ -317,6 +344,11 @@ namespace Basis.HelloWorld
         {
         }
 
+        /// <summary>A message from a peer that is not the server connection; a subclass may claim it.</summary>
+        protected virtual void HandlePeerMessage(NetPeer peer, NetPacketReader reader, byte channel)
+        {
+        }
+
         /// <summary>Extra work on the shared pump thread, for a subclass with its own transport.</summary>
         protected virtual void OnTick(float elapsedMs)
         {
@@ -362,6 +394,7 @@ namespace Basis.HelloWorld
         {
             return new Configuration
             {
+                NetworkStackId = NetworkStackId,
                 UseAuthIdentity = true,
                 // Nothing here reads the per-channel counters, and leaving them on costs an
                 // interlocked increment per packet on the pump thread.
@@ -384,7 +417,7 @@ namespace Basis.HelloWorld
         /// </summary>
         private static class Pump
         {
-            /// <summary>Poll interval. Well under LiteNetLib's own update tick, so acks are never the delay.</summary>
+            /// <summary>Poll interval. Well under any transport's own update tick, so acks are never the delay.</summary>
             private const int TickMs = 5;
 
             private static readonly List<BasisHelloClient> Clients = new();

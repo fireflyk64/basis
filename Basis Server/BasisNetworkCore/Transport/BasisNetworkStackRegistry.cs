@@ -32,6 +32,8 @@ namespace Basis.Network.Core
     public static class BasisNetworkStackRegistry
     {
         public const string LiteNetLibId = "litenetlib";
+        /// <summary>The Rust server's transport, reached through the basis_iroh_ffi native library.</summary>
+        public const string IrohId = "iroh";
         public const string DefaultId = LiteNetLibId;
 
         public readonly struct StackInfo
@@ -71,6 +73,10 @@ namespace Basis.Network.Core
             Register(LiteNetLibId, "LiteNetLib", (listener, config) => new LNLNetManager(listener, config));
             RegisterParser(LiteNetLibId, new LNLConnectionTargetParser());
             BasisTransportConfigStore.RegisterType(LiteNetLibId, typeof(LNLTransportConfig));
+            // The native library is only loaded when a manager is actually created, so a build
+            // without it beside the executable still runs on LiteNetLib.
+            Register(IrohId, "iroh", (listener, config) => new IrohNetManager(listener, config));
+            RegisterParser(IrohId, new IrohConnectionTargetParser());
         }
 
         public static void Register(string id, string displayName, NetManagerFactory factory)

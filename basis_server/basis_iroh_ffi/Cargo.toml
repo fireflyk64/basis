@@ -1,18 +1,17 @@
 [package]
 name = "basis_iroh_ffi"
-description = "C ABI over iroh for the C# clients (P/Invoke)."
+description = "C ABI over the Basis iroh transport for the C# clients (P/Invoke)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+basis_network_core = { path = "../basis_network_core" }
+basis_error = { path = "../basis_error" }
 iroh.workspace = true
-iroh-base.workspace = true
-tokio.workspace = true
-bytes.workspace = true
 parking_lot.workspace = true
-libc.workspace = true
+serde_json.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -64,6 +64,11 @@ namespace Basis.Network.Core
             PeerConnectedEvent?.Invoke(peer);
         }
 
+        public void RaiseNetworkError(IPEndPoint endPoint, SocketError socketError)
+        {
+            NetworkErrorEvent?.Invoke(endPoint, socketError);
+        }
+
         public void RaiseNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader)
         {
             NetworkReceiveUnconnectedEvent?.Invoke(remoteEndPoint, reader);

@@ -430,6 +430,9 @@ impl NetPeer for IrohNetPeer {
 //  Connection request
 // ────────────────────────────────────────────────────────────────────────────
 
+/// How long an undecided connection request stays open before the transport rejects it.
+const REQUEST_DECISION_TIMEOUT: Duration = Duration::from_secs(15);
+
 const REQUEST_UNDECIDED: u8 = 0;
 const REQUEST_ACCEPTED: u8 = 1;
 const REQUEST_REJECTED: u8 = 2;
@@ -1032,8 +1035,15 @@ impl ManagerInner {
         if let Err(e) = tokio::task::spawn_blocking(move || listener.raise_connection_request(req)).await {
             BNL::log_error(format!("[iroh] the connection request handler for {remote} did not complete: {e}"));
         }
+        // A handler may hold the request and decide later — a client that hands connection
+        // requests to another thread (the FFI event queue, a UI) does exactly that. LiteNetLib
+        // kept an undecided request until its timeout; so does this.
+        let deadline = tokio::time::Instant::now() + REQUEST_DECISION_TIMEOUT;
+        while !request.is_decided() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
         if !request.is_decided() {
-            // No handler decided: LiteNetLib would time the request out.
+            // No handler decided in time: LiteNetLib would time the request out.
             if let Err(e) = request.reject(&NetDataWriter::new()) {
                 BNL::log_warning(format!("[iroh] could not reject the undecided connection from {remote}: {e}"));
             }

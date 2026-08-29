@@ -1,3 +1,5 @@
+using Basis.Network.Core;
+
 namespace Basis.HelloWorld
 {
     /// <summary>
@@ -11,10 +13,15 @@ namespace Basis.HelloWorld
     ///
     /// The password has to match the running server's <c>Password</c> in config.xml.
     ///
+    /// <para><c>--ip</c> takes a host or, on the iroh stack, a connection string
+    /// (<c>&lt;endpoint-id&gt;[@host:port]</c>) — the server prints its own at boot. The clients
+    /// reach the Rust server through the basis_iroh_ffi native library beside the executable;
+    /// <c>--stack litenetlib</c> talks to the legacy C# server instead.</para>
+    ///
     /// <para>Add <c>--direct</c> and the ring runs over direct peer-to-peer links instead: the
-    /// server introduces each neighbour pair by ip address and then carries none of the traffic.
-    /// Each hop prints the path it actually took, so a link that failed to punch shows up as a
-    /// relayed hop rather than as silence.</para>
+    /// server introduces each neighbour pair by endpoint address and then carries none of the
+    /// traffic. Each hop prints the path it actually took, so a link that failed to come up shows
+    /// up as a relayed hop rather than as silence.</para>
     /// </summary>
     public static class Program
     {
@@ -26,6 +33,7 @@ namespace Basis.HelloWorld
             int clientCount = Math.Max(2, int.Parse(Arg(args, "--clients", "2")));
             int hops = Math.Max(1, int.Parse(Arg(args, "--hops", "10")));
             bool direct = Array.IndexOf(args, "--direct") >= 0;
+            BasisHelloClient.NetworkStackId = Arg(args, "--stack", BasisNetworkStackRegistry.IrohId);
 
             Console.WriteLine($"Connecting {clientCount} clients to {ip}:{port} for a {hops}-hop volley{(direct ? " over direct links" : "")}.");
 
@@ -75,7 +83,7 @@ namespace Basis.HelloWorld
                         var self = (HelloPeerClient)clients[i];
                         ushort neighbour = clients[(i + 1) % clientCount].PlayerId;
                         bool up = self.OpenDirectLink(neighbour, TimeSpan.FromSeconds(20));
-                        Console.WriteLine($"  {self.DisplayName} -> player {neighbour}: {(up ? $"direct link up (own port {self.DirectPort})" : "no direct link, will relay")}");
+                        Console.WriteLine($"  {self.DisplayName} -> player {neighbour}: {(up ? $"direct link up (own endpoint {self.DirectEndpoint})" : "no direct link, will relay")}");
                     }
                 }
 

@@ -1228,6 +1228,13 @@ namespace Basis.Network.Core
         // pair. Positive confirmation the direct link is fully up; a client that stays
         // Connected without ever seeing this treats its link as partial (server fallback).
         public const byte P2PSub_Offloaded = 7;
+        /// <summary>
+        /// Client → server: this side's transport address for a session (iroh stack). The server
+        /// pairs the two halves and answers each with <see cref="P2PSub_Introduce"/>.
+        /// </summary>
+        public const byte P2PSub_IntroduceRequest = 8;
+        /// <summary>Server → client: the other side's transport address, and whether this side dials.</summary>
+        public const byte P2PSub_Introduce = 9;
 
         // ── Direct-connect custom data (P2P-first, server fallback) ──────────
         /// <summary>P2P world/prop direct custom data. Frame: [messageIndex:2][payload].</summary>
