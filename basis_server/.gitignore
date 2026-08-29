@@ -9,3 +9,6 @@
 # C# build output for the FFI bindings and hello world clients.
 csharp/**/bin/
 csharp/**/obj/
+
+# written by tests that run with file support from the crate directory
+basis_network_server/permissions.xml

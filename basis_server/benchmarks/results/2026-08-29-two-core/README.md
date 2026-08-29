@@ -155,3 +155,75 @@ the Rust server's remaining design differences live, never got to widen here.
 The only dimension where the C# server led by more than 10 % is CPU at 50–100 players; R1 is
 the plan for it. Everything else — delivery, egress, voice, tick, overrun, memory, idle — the
 Rust server matches or beats at every rung measured.
+
+## 4. After the first two changes (same day, same box, same harness)
+
+Two of the plan items were implemented and everything re-measured.
+
+**R1 — inline peer pass below a worker's worth of peers** (`lnl_network_impl::net_manager`).
+
+| players | C# server | Rust before | Rust after | after / C# |
+|---|---|---|---|---|
+| 50  | 0.125 cores | 0.198 | **0.130** | 1.04× |
+| 100 | 0.231 | 0.351 | **0.276** | 1.19× |
+| 200 | 0.405 | 0.375 | **0.363** | 0.90× |
+| 400 | 0.663 · 46.5 Hz/pair | 0.672 · 50.5 | **0.639 · 50.1 Hz/pair** | 0.96× · 1.08× |
+
+The 50-player gap is gone and the 100-player one is down from 1.52× to 1.19× (0.045 of a core
+in absolute terms); at 200 and 400 the Rust server is now cheaper than the C# one while
+delivering the same or more. With `committedMb` now reported: 29 / 37 / 56 / 104 MB against the
+CLR's 19 / 25 / 52 / 109 MB.
+
+**I1 — coalesced iroh datagrams** (`basis/2`), then **ACK frequency + MTU discovery**.
+
+| players (all-iroh crowd) | server cores before → coalesced → +ack/mtu | frames/s → UDP packets/s (real) | C# legacy server |
+|---|---|---|---|
+| 100 | 0.349 → 0.319 → **0.326** | 49.0k → 12.1k → 14.1k packets | 0.231 cores · 9.7k packets |
+| 200 | 0.699 → 0.696 → **0.725** | 166.2k → 24.7k → 31.7k packets | 0.405 · 23.3k |
+| 400 | 0.873 → 0.912 → **0.851** (35.2 Hz/pair) | 343.0k → 32.0k → 33.2k | 0.663 · 58.9k (46.5 Hz/pair) |
+
+Coalescing cut the frame count 7× as intended — and **moved the CPU by nothing**, because
+quinn was already packing the queued datagram frames into packets: the "datagrams/s" the
+server reported was the application frame count, not packets. (The transport now reports
+quinn's real UDP packet and byte counts, which is what the third column and every later run
+show; a per-thread profile of the server under 100 iroh clients put 81 % of its 0.32 cores
+in the tokio/iroh workers and 16 % in the reduction send pass.) Raising the ACK threshold
+to 8 packets / 25 ms and enabling MTU discovery changed nothing measurable either. The mixed
+crowd (half legacy, half iroh) sits between the two: 0.530 cores at 200 players, 83.33 Hz/pair.
+
+So the honest state of the iroh question is: **the iroh path costs the server about 1.4× the
+LiteNetLib path at 100 players and 1.8× at 200 on one core, the cost is inside QUIC connection
+processing (per-packet AEAD, ACK and loss-recovery state per connection), and it did not move
+with any framing change.** Two things follow. First, the client side pays the same tax — the
+Rust iroh crowd costs 3–4× the C# LiteNetLib crowd on its core, because every simulated client
+is its own QUIC endpoint — and at 400 players the crowd core saturates before the server does,
+which is why voice heard collapses (57 %) in the all-iroh runs on this box and not a server
+finding. Second, the shape of the cost matters: LiteNetLib's cost is one receive thread and one
+logic thread, which a many-core host cannot spread; quinn's is per connection on a work-stealing
+runtime, which it can. Whether that turns the ratio around is exactly what the many-core run
+(without `--two-core`) decides, and nothing on a two-core box can.
+
+### Revised iroh plan
+
+1. **Many-core run first** (`run-comparison.sh` without `BENCH_TWO_CORE`, 250–2000 players).
+   The per-connection cost only matters if it does not parallelise; on this box it never got
+   the chance to.
+2. **Profile on a real host** (`perf record -g` on `basis_network_console` under an all-iroh
+   crowd; this sandbox has no `perf`). The question is how much of the tokio-worker time is
+   AEAD, how much is quinn's packet/ACK machinery, and how much is our per-peer tasks and
+   wakeups. Each has a different fix and guessing between them is what the two changes above
+   were.
+3. **Crypto path check.** Confirm `ring` is using AES-NI/AVX2 on the host (it does on x86_64
+   with the `tls-ring` feature); if the host lacks it, ChaCha20-Poly1305 is the cheaper AEAD.
+4. **Wake-up batching.** Each `send` wakes the peer's sender task; a 2 ms pump that drains
+   every peer's datagram queue in one pass (LiteNetLib's model) would turn ~20k wakeups/s at
+   200 players into 500 passes/s. Only worth doing after (2) shows the wakeups are the cost.
+5. **GSO** on a kernel that has it (quinn enables it itself; this sandbox's does not).
+6. **Client-side cost**: the load client should share one iroh endpoint across its simulated
+   clients where the test allows, which is also how a Unity client would run — one endpoint,
+   one connection.
+
+Until (1) and (2) are done the recommendation for a deployment stands as measured: serve the
+existing population on the LiteNetLib path (where the Rust server is now as cheap or cheaper
+than the C# one at every rung), and treat the iroh path as correct but not yet the cheaper of
+the two.

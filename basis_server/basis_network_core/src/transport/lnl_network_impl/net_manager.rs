@@ -101,6 +101,8 @@ impl LnlSettings {
 
 /// Serial below this: `Parallel.ForEach` overhead is not worth paying for a handful of peers.
 const PARALLEL_PEER_THRESHOLD: usize = 8;
+/// No worker is handed fewer peers than this; a smaller chunk costs more to dispatch than to update.
+const MIN_PEERS_PER_CHUNK: usize = 16;
 const RECEIVE_BUFFER_BYTES: usize = 2048;
 
 struct Sockets {
@@ -659,11 +661,20 @@ impl ManagerInner {
                     peer.update(elapsed);
                 }
             };
+            // Serial unless the pool has more than one thread AND the population is worth the
+            // hand-off: below a worker's worth of peers the pass is microseconds of work, and
+            // paying a cross-thread wake-up for it every 2 ms cost a measurable share of a core
+            // at 50-100 players (see benchmarks/results, plan R1). Parallel.ForEach in the C#
+            // ran inline with one worker for the same reason.
             let pool = self.peer_pool.lock();
-            match pool.as_ref().filter(|_| snapshot.len() > PARALLEL_PEER_THRESHOLD) {
+            let parallel = pool
+                .as_ref()
+                .filter(|pool| pool.current_num_threads() > 1)
+                .filter(|_| snapshot.len() > PARALLEL_PEER_THRESHOLD && snapshot.len() >= self.settings.peers_per_update_worker);
+            match parallel {
                 Some(pool) => {
                     use rayon::prelude::*;
-                    let chunk = (snapshot.len() / pool.current_num_threads().max(1)).clamp(1, self.settings.peers_per_update_worker);
+                    let chunk = (snapshot.len() / pool.current_num_threads().max(1)).clamp(MIN_PEERS_PER_CHUNK, self.settings.peers_per_update_worker);
                     pool.install(|| snapshot.par_chunks(chunk).for_each(|peers| peers.iter().for_each(update)));
                 }
                 None => snapshot.iter().for_each(update),

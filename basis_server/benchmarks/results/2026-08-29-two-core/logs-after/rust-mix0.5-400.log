@@ -1,0 +1,53 @@
+  two-core = on: server pinned to core 0, crowd to core 1; warmup 20s, 4 x 15s windows, ladder to 200. Ratios between two servers under this mode are meaningful; the absolute numbers describe one core, not a host.
+  modern-client = /tmp/claude-1001/-home-sandbox-dev-basis-Basis-Server/2c29acb6-5452-4364-a6d0-51b9bf41e00f/scratchpad/bench/clients/rust
+  mix = 0.5 legacy
+
+  Basis server benchmark
+  Cores          2 logical
+  Memory         6.0 GB (container-limited)
+  OS             Ubuntu 26.04 LTS / X64
+  Runtime        .NET 10.0.11
+  SO_REUSEPORT   available
+  Link           tap0, 10 Gbit/s, MTU 65520
+  net.core.rmem_max            unreadable
+  net.core.wmem_max            unreadable
+  net.core.netdev_max_backlog  unreadable
+  GPU            none - the server runs every pass on the CPU, which is the supported default
+  Server         /tmp/claude-1001/-home-sandbox-dev-basis-Basis-Server/2c29acb6-5452-4364-a6d0-51b9bf41e00f/scratchpad/bench/servers/rust
+
+  /help for commands. /auto runs the whole thing.
+
+
+  windows       4                                                                                                                          timed windows per arm; five is the floor for a verdict
+  window-sec    15                                                                                                                         seconds per window
+  warmup-sec    20                                                                                                                         settling time before the first window; the slicing loop oscillates, so shorter is riskier
+  max-players   200                                                                                                                        ceiling the ladder climbs to
+  corpus        (generated)                                                                                                                captured avatar bundles for the codec benchmark
+  knobs         (all)                                                                                                                      sweep only these settings; '-' for all
+  autowrite     on                                                                                                                         write the tuning profile when a run finishes
+  two-core      on                                                                                                                         pin the server to core 0 and the crowd to core 1; for comparing two servers on a two-core box
+  modern-client /tmp/claude-1001/-home-sandbox-dev-basis-Basis-Server/2c29acb6-5452-4364-a6d0-51b9bf41e00f/scratchpad/bench/clients/rust   directory of the Rust (iroh) load client, for a mixed crowd; '-' for none
+  mix           0.5                                                                                                                        share of the crowd that joins as legacy LiteNetLib clients, 0..1; the rest join over iroh
+
+  /set <name> <value> to change one. They apply to the next job, not a running one.
+  [measure] starting server...
+  [measure] starting 400 load clients on this machine (loopback): 0 legacy (LiteNetLib) + 0 modern (iroh) (200 legacy + 200 iroh) [two-core: server on core 0, crowd on core 1]...
+  [measure] 400 connected; warming up 20s (the slicing controller oscillates, so this is not optional)...
+  [measure] window 1/4: 18.75 Hz/pair, 0.71 cores, 32 MB/s, delivery 100.0 %, slice 2.8
+  [measure] window 2/4: 15.10 Hz/pair, 0.85 cores, 34 MB/s, delivery 100.0 %, slice 3.4
+  [measure] window 3/4: 16.93 Hz/pair, 0.91 cores, 49 MB/s, delivery 100.0 %, slice 3.2
+  [measure] window 4/4: 28.39 Hz/pair, 0.80 cores, 47 MB/s, delivery 100.0 %, slice 2.2
+
+  400 players, 4 windows
+    delivered      17.839 Hz/pair (IQR 4.688)
+    delivery ratio 100.00 %
+    server CPU     0.82 cores (load client 0.81)
+    egress         41 MB/s, 53,733 datagrams/s
+    drops          0/s avatar, 0/s voice
+    slicing        3.0, tick 14.44 ms, overrun 16.0 %
+    memory         120 MB committed, 0 MB fragmented, GC pause 0.0%
+    kernel drops   1,921/s inbound datagrams discarded - the receive path is the limit
+    voice heard    92.87 % (measured at the receivers)
+    RESULT label=measure players=400 windows=4 pairHz=17.8385 delivery=1.0000 serverCores=0.824 clientCores=0.807 mbps=40.520 datagramsPerSec=53732.8 dropsPerSec=0.0 voiceDropsPerSec=0.0 slice=3.00 tickMs=14.444 overrun=0.1602 committedMb=120.2 voiceHeard=0.9287
+
+  measure 400 finished after 1.8 min.

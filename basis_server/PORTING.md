@@ -150,11 +150,11 @@ process-wide static run under a `serial_test` key; everything else runs in paral
 | Infrastructure (8 files) | `infrastructure` | 192 |
 | Networking (14 files + LiteNetLib transport, mixed world, C# interop) | `networking` | 380 |
 | Security (6 files) | `security` | 230 |
-| Voice (2 files) | `voice` | 36 |
+| Voice (2 files) | `voice` | 38 |
 | BasisRestApi.Tests (2 files) | `basis_rest_api_tests` | 38 |
 | Contrib (crypto, did, dns) | the contrib crates' `tests/` | 25 |
 
-1071 Rust tests (plus 28 wire-level unit tests inside `lnl_network_impl`) against 1022 C# facts
+1073 Rust tests (plus 30 wire-level unit tests inside `lnl_network_impl`) against 1022 C# facts
 + 34 REST facts. Nothing in the C# tree was deleted; the C# suites still run against the C#
 server, and `HelloWorldPeerStressTests` (C#) now needs the Rust server on the `iroh` stack (or
 `--stack litenetlib` against the C# server).
@@ -167,9 +167,10 @@ Not ported, on purpose:
 - `Compression/{GpuLz4Experiment, PositionQuantizationExperiment, SimdCodecBenchmark,
   BundleCompressionExperiment, BundleDictionaryTrainer}` and `Compute/GpuLz4Experiment` —
   recorded measurements and tooling, not tests.
-- `Voice/VoicePriorityQueueTests.{SaturatedBulkQueue_DoesNotShedVoice,
-  VoiceOnPriorityQueue_ArrivesIntact}` and `Infrastructure/CoreBudgetTests.PeerUpdateSizing…` —
-  they drive LiteNetLib's per-peer unreliable queues; voice rides its own QUIC stream on iroh.
+- `Infrastructure/CoreBudgetTests.PeerUpdateSizing…` — it reflects into LiteNetLib's private
+  adaptive worker controller (`GetPeerUpdateOptions`), which the Rust transport does not have:
+  its peer-update pool is sized once at start from the core budget. (The two voice-queue tests
+  that were skipped alongside it are now ported against the LiteNetLib transport's queues.)
 - Cases that only exist because C# has `null` (null peers, null strings, null arrays) and the
   non-auto-resize `NetDataWriter` constructor, which the Rust writer does not have.
 - `BasisServerBenchmark` (a tool, not a test) stays in C#: it measures both servers through
