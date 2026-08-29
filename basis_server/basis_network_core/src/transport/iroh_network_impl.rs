@@ -16,15 +16,6 @@
 //! A stream opens with a two-byte header `[kind][channel]` and then carries length-prefixed
 //! frames `[len:u32][payload]`, so a channel's ordering is exactly one stream's ordering.
 //!
-//! # Coalesced datagrams
-//!
-//! Every QUIC datagram is its own packet — a header, an AEAD tag, an encryption pass and a
-//! syscall on each end — so a peer's queued unreliable frames are packed into one datagram up
-//! to the path MTU before they leave, the way LiteNetLib's `Merged` framing packs them:
-//! `[0x80][len:u16][frame][len:u16][frame]…`, voice frames first. A frame that is alone in the
-//! queue goes out bare, exactly as before. Measured at 200 players this is the difference
-//! between 7× and 1× LiteNetLib's datagram count for the same bytes (see `benchmarks/`).
-//!
 //! # Connection handshake
 //!
 //! LiteNetLib carried the connect payload (protocol version, password, ready message) in its
@@ -57,7 +48,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::{Bytes, BytesMut};
 use dashmap::DashMap;
-use iroh::endpoint::{AckFrequencyConfig, Connection, IdleTimeout, MtuDiscoveryConfig, QuicTransportConfig, RecvStream, SendStream, VarInt, presets};
+use iroh::endpoint::{presets, Connection, IdleTimeout, QuicTransportConfig, RecvStream, SendStream, VarInt};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, SecretKey};
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::Notify;
@@ -76,8 +67,8 @@ use super::connection_target::{ConnectionTarget, ConnectionTargetKeys};
 use super::iroh_connection_target_parser::IrohConnectionTargetParser;
 use super::lnl_connection_target_parser::LNLConnectionTargetParser;
 
-/// ALPN for Basis client connections. `basis/2` added the coalesced datagram container.
-pub const BASIS_ALPN: &[u8] = b"basis/2";
+/// ALPN for Basis client connections.
+pub const BASIS_ALPN: &[u8] = b"basis/1";
 /// ALPN for the unconnected server-info probe.
 pub const BASIS_PROBE_ALPN: &[u8] = b"basis-probe/1";
 
@@ -93,43 +84,9 @@ const CTL_DISCONNECT: u8 = 6;
 const STREAM_RELIABLE_ORDERED: u8 = 1;
 const STREAM_RELIABLE_UNORDERED: u8 = 2;
 
-// Datagram header: low 6 bits channel, bit 6 = sequenced (u16 sequence follows), bit 7 = a
-// container of several frames, each `[len:u16][frame]`.
+// Datagram header: low 6 bits channel, bit 6 = sequenced (u16 sequence follows).
 const DATAGRAM_SEQUENCED_FLAG: u8 = 0x40;
 const DATAGRAM_CHANNEL_MASK: u8 = 0x3F;
-const DATAGRAM_COALESCED_FLAG: u8 = 0x80;
-const COALESCED_HEADER: usize = 1;
-const COALESCED_ENTRY_OVERHEAD: usize = 2;
-
-/// Packs `frames` into one coalesced datagram. Only called with two or more frames that were
-/// already checked to fit `limit` together.
-fn coalesce_frames(frames: &[Bytes]) -> Bytes {
-    let total = COALESCED_HEADER + frames.iter().map(|f| f.len() + COALESCED_ENTRY_OVERHEAD).sum::<usize>();
-    let mut out = BytesMut::with_capacity(total);
-    out.extend_from_slice(&[DATAGRAM_COALESCED_FLAG]);
-    for frame in frames {
-        out.extend_from_slice(&(u16::try_from(frame.len()).unwrap_or(u16::MAX)).to_le_bytes());
-        out.extend_from_slice(frame);
-    }
-    out.freeze()
-}
-
-/// The frames of a coalesced datagram, in order. Stops at the first entry that does not fit:
-/// the bytes are the far side's, and a ragged tail is dropped rather than read past.
-fn coalesced_frames(datagram: &Bytes) -> Vec<Bytes> {
-    let mut frames = Vec::new();
-    let mut pos = COALESCED_HEADER;
-    while pos + COALESCED_ENTRY_OVERHEAD <= datagram.len() {
-        let len = usize::from(u16::from_le_bytes([datagram[pos], datagram[pos + 1]]));
-        pos += COALESCED_ENTRY_OVERHEAD;
-        if len == 0 || pos + len > datagram.len() {
-            break;
-        }
-        frames.push(datagram.slice(pos..pos + len));
-        pos += len;
-    }
-    frames
-}
 
 /// Largest single frame accepted on a reliable stream or the control stream; anything over is
 /// a protocol violation and closes the connection. The largest Basis message (a ready batch)
@@ -734,9 +691,9 @@ impl IrohNetManager {
         self.inner.peers.get(&id).map(|p| p.clone())
     }
 
-    /// Application frames handed to the transport (each `send` of an unreliable or reliable
-    /// message), as opposed to the UDP packets they became — see [`NetManager::statistics`].
-    /// The coalescing ratio is the one against the other.
+    /// Application frames handed to the transport (each `send`), as opposed to the UDP packets
+    /// they became — see [`NetManager::statistics`]. quinn packs queued datagram frames into
+    /// packets itself, which is why the two differ and why no framing above it is needed.
     pub fn frames_sent(&self) -> u64 {
         self.inner.packets_sent.load(Ordering::Relaxed)
     }
@@ -961,23 +918,12 @@ impl ManagerInner {
         } else {
             idle / 3
         };
-        // Two thirds of the packets a QUIC peer sends under Basis traffic are ACKs unless it is
-        // told otherwise: the default acknowledges every second ack-eliciting packet at once.
-        // Avatar and voice traffic is a steady stream in both directions, so acknowledging every
-        // eighth packet, or after 25 ms, loses nothing a reliable stream needs and halves the
-        // packet count on the wire (measured: benchmarks/results). MTU discovery lets the path
-        // carry ~1450-byte packets instead of QUIC's 1200-byte initial guess, which is fewer
-        // packets again for the same bytes.
-        let mut ack_frequency = AckFrequencyConfig::default();
-        ack_frequency.ack_eliciting_threshold(VarInt::from_u32(8)).max_ack_delay(Some(Duration::from_millis(25)));
         QuicTransportConfig::builder()
             .max_idle_timeout(IdleTimeout::try_from(idle).ok())
             .keep_alive_interval(keep_alive)
             .max_concurrent_uni_streams(VarInt::from_u32(4096))
             .datagram_receive_buffer_size(Some(4 * 1024 * 1024))
             .datagram_send_buffer_size(4 * 1024 * 1024)
-            .ack_frequency_config(Some(ack_frequency))
-            .mtu_discovery_config(Some(MtuDiscoveryConfig::default()))
             .build()
     }
 
@@ -1215,41 +1161,14 @@ impl ManagerInner {
 
     async fn sender_task(self: Arc<Self>, state: Arc<PeerState>) {
         let mut ordered_streams: HashMap<u8, SendStream> = HashMap::new();
-        let mut batch: Vec<Bytes> = Vec::with_capacity(32);
         loop {
             // Voice first, then bulk, then reliable — the priority the C# transport gave voice.
-            // Everything queued that fits one datagram leaves together.
-            let limit = state.conn.max_datagram_size().unwrap_or(0);
-            let mut used = COALESCED_HEADER;
-            batch.clear();
-            loop {
-                let next = {
-                    let mut priority = state.priority_queue.lock();
-                    let candidate = priority.front().cloned().or_else(|| state.bulk_queue.lock().front().cloned());
-                    let Some(candidate) = candidate else { break };
-                    let entry = candidate.len() + COALESCED_ENTRY_OVERHEAD;
-                    if !batch.is_empty() && used + entry > limit {
-                        break; // full: this one starts the next datagram
-                    }
-                    used += entry;
-                    if priority.front().is_some_and(|f| f.as_ptr() == candidate.as_ptr()) {
-                        priority.pop_front()
-                    } else {
-                        state.bulk_queue.lock().pop_front()
-                    }
-                };
-                let Some(frame) = next else { break };
+            let next_datagram = state.priority_queue.lock().pop_front().or_else(|| state.bulk_queue.lock().pop_front());
+            if let Some(frame) = next_datagram {
                 let channel = frame.first().copied().unwrap_or(0) & DATAGRAM_CHANNEL_MASK;
                 if let Some(counter) = state.queued_per_channel.get(usize::from(channel)) {
                     counter.fetch_sub(1, Ordering::Relaxed);
                 }
-                batch.push(frame);
-                if batch.len() == 1 && used + COALESCED_ENTRY_OVERHEAD >= limit {
-                    break; // a frame that fills the datagram on its own goes out bare
-                }
-            }
-            if !batch.is_empty() {
-                let frame = if batch.len() == 1 { batch[0].clone() } else { coalesce_frames(&batch) };
                 let len = frame.len();
                 match state.conn.send_datagram_wait(frame).await {
                     Ok(()) => self.record_sent(len),
@@ -1355,40 +1274,28 @@ impl ManagerInner {
             *state.last_packet.lock() = Instant::now();
             self.record_received(datagram.len());
             let Some(&header) = datagram.first() else { continue };
-            if (header & DATAGRAM_COALESCED_FLAG) != 0 {
-                for frame in coalesced_frames(&datagram) {
-                    self.deliver_datagram_frame(&state, &peer, frame);
-                }
-            } else {
-                self.deliver_datagram_frame(&state, &peer, datagram);
-            }
-        }
-    }
-
-    /// One unreliable or sequenced frame, bare or unpacked from a container.
-    fn deliver_datagram_frame(&self, state: &PeerState, peer: &NetPeerRef, frame: Bytes) {
-        let Some(&header) = frame.first() else { return };
-        let channel = header & DATAGRAM_CHANNEL_MASK;
-        if (header & DATAGRAM_SEQUENCED_FLAG) != 0 {
-            let (Some(&lo), Some(&hi)) = (frame.get(1), frame.get(2)) else {
-                return;
-            };
-            let seq = u16::from_le_bytes([lo, hi]);
-            {
-                let mut last = state.sequenced_in.lock();
-                let Some(slot) = last.get_mut(usize::from(channel)) else { return };
-                if let Some(prev) = *slot
-                    && (seq.wrapping_sub(prev) as i16) <= 0
+            let channel = header & DATAGRAM_CHANNEL_MASK;
+            if (header & DATAGRAM_SEQUENCED_FLAG) != 0 {
+                let (Some(&lo), Some(&hi)) = (datagram.get(1), datagram.get(2)) else {
+                    continue;
+                };
+                let seq = u16::from_le_bytes([lo, hi]);
                 {
-                    return; // older than what we already delivered
+                    let mut last = state.sequenced_in.lock();
+                    let Some(slot) = last.get_mut(usize::from(channel)) else { continue };
+                    if let Some(prev) = *slot
+                        && (seq.wrapping_sub(prev) as i16) <= 0
+                    {
+                        continue; // older than what we already delivered
+                    }
+                    *slot = Some(seq);
                 }
-                *slot = Some(seq);
+                let reader = NetPacketReader::new(datagram.slice(3..));
+                self.listener.raise_network_receive(peer.clone(), reader, channel, DeliveryMethod::Sequenced);
+            } else {
+                let reader = NetPacketReader::new(datagram.slice(1..));
+                self.listener.raise_network_receive(peer.clone(), reader, channel, DeliveryMethod::Unreliable);
             }
-            let reader = NetPacketReader::new(frame.slice(3..));
-            self.listener.raise_network_receive(peer.clone(), reader, channel, DeliveryMethod::Sequenced);
-        } else {
-            let reader = NetPacketReader::new(frame.slice(1..));
-            self.listener.raise_network_receive(peer.clone(), reader, channel, DeliveryMethod::Unreliable);
         }
     }
 
@@ -1779,8 +1686,6 @@ impl NetManager for IrohNetManager {
         }
     }
 
-
-
     fn connected_peers_count(&self) -> i32 {
         self.inner.peers.len() as i32
     }
@@ -1943,31 +1848,3 @@ impl NetPeer for PendingPeer {
     }
 }
 
-
-#[cfg(test)]
-mod coalescing_tests {
-    use super::*;
-
-    #[test]
-    fn frames_round_trip_through_a_container() {
-        let frames: Vec<Bytes> = vec![Bytes::from_static(&[3, 1, 2, 3]), Bytes::from_static(&[4 | DATAGRAM_SEQUENCED_FLAG, 9, 0, 7]), Bytes::from_static(&[63])];
-        let container = coalesce_frames(&frames);
-        assert_eq!(container[0], DATAGRAM_COALESCED_FLAG);
-        assert_eq!(container.len(), 1 + frames.iter().map(|f| f.len() + 2).sum::<usize>());
-        assert_eq!(coalesced_frames(&container), frames);
-    }
-
-    #[test]
-    fn a_ragged_tail_is_dropped_not_read_past() {
-        let frames = vec![Bytes::from_static(&[1, 1]), Bytes::from_static(&[2, 2, 2])];
-        let container = coalesce_frames(&frames);
-        // Cut inside the second entry: only the first survives.
-        let cut = container.slice(..container.len() - 1);
-        assert_eq!(coalesced_frames(&cut), vec![Bytes::from_static(&[1, 1])]);
-        // A zero-length entry ends the walk.
-        let zero = Bytes::from_static(&[DATAGRAM_COALESCED_FLAG, 0, 0, 5, 5]);
-        assert!(coalesced_frames(&zero).is_empty());
-        // A bare flag byte holds nothing.
-        assert!(coalesced_frames(&Bytes::from_static(&[DATAGRAM_COALESCED_FLAG])).is_empty());
-    }
-}

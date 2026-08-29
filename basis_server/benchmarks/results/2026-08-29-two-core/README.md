@@ -227,3 +227,24 @@ Until (1) and (2) are done the recommendation for a deployment stands as measure
 existing population on the LiteNetLib path (where the Rust server is now as cheap or cheaper
 than the C# one at every rung), and treat the iroh path as correct but not yet the cheaper of
 the two.
+
+## 5. Revert of the framing experiments (perf validated first)
+
+Since coalescing, ACK-frequency and MTU discovery each moved the iroh CPU by nothing (§4), the
+complexity was removed: the iroh transport is back to `basis/1` — one QUIC datagram per
+unreliable frame, quinn's own packet packing underneath, default ACK frequency, no MTU
+discovery config. The one thing kept from that work is the honest statistic:
+`NetManager::statistics` reports quinn's real UDP packet and byte counts (retired connections
+folded in so totals never regress), because that is what made the measurement trustworthy in
+the first place.
+
+Re-validation with the reverted transport, same box and harness, all-iroh and legacy crowds:
+
+| players | all-iroh server cores (coalesced → reverted) | legacy server cores |
+|---|---|---|
+| 100 | 0.319 → **0.322** | 0.276 |
+| 200 | 0.696 → **~0.70** | 0.363 |
+
+Within noise of the coalesced numbers, confirming the framing carried no weight. The iroh cost
+remains inside quinn's per-connection processing; the plan in §4 (many-core run, `perf` profile)
+is unchanged, now against a simpler transport.
