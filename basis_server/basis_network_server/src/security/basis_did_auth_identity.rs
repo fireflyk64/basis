@@ -90,9 +90,13 @@ impl BasisDIDAuthIdentity {
         String::from_utf8_lossy(compressed_bytes).into_owned()
     }
 
-    /// The pending/authenticated entries, for diagnostics and tests.
     /// Installs an authenticated entry directly, bypassing the challenge round trip, so a test
     /// can stage which connection owns a peer id.
+    ///
+    /// Compiled only under the `test-seams` feature. Reachable from a shipped server this would
+    /// not be a test double, it would be an authentication bypass: it marks a peer authenticated
+    /// against a UUID nobody proved they hold.
+    #[cfg(any(test, feature = "test-seams"))]
     pub fn register_for_tests(&self, id: i32, uuid: &str, peer: NetPeerRef) {
         let did = Did::new(uuid);
         let challenge = self.make_challenge(&did);

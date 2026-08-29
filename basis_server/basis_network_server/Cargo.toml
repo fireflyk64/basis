@@ -6,6 +6,16 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# Seams that exist for the test suites and must not be reachable from a shipped server. The
+# auth-identity one installs an authenticated entry without the challenge round trip, so it is
+# the difference between a test double and an authentication bypass.
+#
+# Cargo unifies features across a workspace build, so `cargo build --workspace` (which also
+# builds the test crates) does enable this. The shipping path — `cargo build --release -p
+# basis_network_console` — does not, and that is the build the guarantee is about.
+test-seams = []
+
 [dependencies]
 basis_network_core = { path = "../basis_network_core" }
 basis_error = { workspace = true, features = ["tokio"] }

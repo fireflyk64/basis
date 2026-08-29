@@ -278,7 +278,9 @@ impl BasisSetupWizard {
     }
 
     pub fn looks_like_did(value: &str) -> bool {
-        value.len() > "did:".len() && value[..4].eq_ignore_ascii_case("did:") && !value.contains(' ')
+        // `value` is operator input, so it may split a multi-byte character at byte 4; slicing
+        // there would panic and abort the first-boot wizard. `starts_with` is char-safe.
+        value.len() > "did:".len() && value.get(.."did:".len()).is_some_and(|p| p.eq_ignore_ascii_case("did:")) && !value.contains(' ')
     }
 
     /// Yes/no prompt that defaults to NO on a blank line.

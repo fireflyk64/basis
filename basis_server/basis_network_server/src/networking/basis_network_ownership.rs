@@ -232,8 +232,10 @@ impl BasisNetworkOwnership {
                 true
             }
             None => {
-                Self::add_ownership(object_id, new_owner_id);
-                true
+                // The implicit acquire can now be REFUSED (the per-player ownership cap), so its
+                // result is the result. Reporting success here would have the room told that a
+                // player owns an object the table has no record of.
+                Self::add_ownership(object_id, new_owner_id)
             }
         }
     }

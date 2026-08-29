@@ -745,6 +745,12 @@ impl ManagerInner {
             // paying a cross-thread wake-up for it every 2 ms cost a measurable share of a core
             // at 50-100 players (see benchmarks/results, plan R1). Parallel.ForEach in the C#
             // ran inline with one worker for the same reason.
+            // A panic while updating one peer must not stop acks, resends, pings and timeouts
+            // for every other peer — which is what an unwound logic thread would do, silently,
+            // with the process still up. The C# `UpdateLogic` caught and logged for the same
+            // reason (NetManager.cs). Contained per pass, not per peer, so the cost is one
+            // guard a tick rather than one per peer per tick.
+            let pass = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let pool = self.peer_pool.lock();
             let parallel = pool
                 .as_ref()
@@ -763,6 +769,15 @@ impl ManagerInner {
             let to_remove = std::mem::take(&mut *self.peers_to_remove.lock());
             for peer in &to_remove {
                 self.remove_peer(peer);
+            }
+            }));
+            if let Err(payload) = pass {
+                let message = payload
+                    .downcast_ref::<&str>()
+                    .map(|s| (*s).to_string())
+                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "non-string panic payload".to_string());
+                NetDebug::write(NetLogLevel::Error, &format!("[NM] LogicThread error: {message}"));
             }
 
             let pass = started.elapsed();

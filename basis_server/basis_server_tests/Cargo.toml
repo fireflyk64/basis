@@ -7,7 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-basis_network_server = { path = "../basis_network_server" }
+basis_network_server = { path = "../basis_network_server", features = ["test-seams"] }
 basis_network_core = { path = "../basis_network_core" }
 basis_network_client = { path = "../basis_network_client" }
 basis_network_compute = { path = "../basis_network_compute" }
