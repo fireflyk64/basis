@@ -34,6 +34,7 @@ fn round_trip_realistic_small_motion() {
         for _ in 0..100 {
             let kf = S::make_realistic_payload(q, &mut rng);
             let mut cur = kf.clone();
+            #[allow(clippy::needless_range_loop)] // the slot indexes three tables at once
             for s in 0..S::WIRE_BONE_SLOTS {
                 let (x, y, z, w) = BasisBoneRotationCompression::decode_smallest_three(S::get_bone(&kf, q, s), bpc[s] as u32, BasisBoneRotationCompression::MAX_COMPONENT[s]);
                 let nudge = 0.002f32;

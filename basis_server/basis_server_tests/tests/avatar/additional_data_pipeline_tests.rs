@@ -784,11 +784,13 @@ fn bundle_path_keyframe_and_delta_with_face_data_round_trip_losslessly() {
 
     // Pending buffer exactly as the send loop stages it: one keyframe + one delta, each with a
     // per-receiver interval byte to patch.
-    let mut recv = ReceiverData::default();
-    recv.pending_sends = vec![
-        PendingAvatarSend { length: kf_wire.len(), source: kf_wire.clone(), channel: BasisNetworkCommons::get_player_avatar_channel_for_quality(3, true), interval: 37, interval_offset: 1 },
-        PendingAvatarSend { length: delta_wire.len(), source: delta_wire, channel: BasisNetworkCommons::DELTA_AVATAR_CHANNEL, interval: 53, interval_offset: 2 },
-    ];
+    let mut recv = ReceiverData {
+        pending_sends: vec![
+            PendingAvatarSend { length: kf_wire.len(), source: kf_wire.clone(), channel: BasisNetworkCommons::get_player_avatar_channel_for_quality(3, true), interval: 37, interval_offset: 1 },
+            PendingAvatarSend { length: delta_wire.len(), source: delta_wire, channel: BasisNetworkCommons::DELTA_AVATAR_CHANNEL, interval: 53, interval_offset: 2 },
+        ],
+        ..Default::default()
+    };
     let raw_len = BasisServerReductionSystemEvents::test_only_build_raw_for_range(&mut recv, 0, 2);
     assert!(raw_len > 0);
 

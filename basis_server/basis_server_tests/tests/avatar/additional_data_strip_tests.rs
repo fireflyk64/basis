@@ -22,14 +22,15 @@ impl Drop for StripGuard {
 }
 
 fn sender_with_high_additional() -> SenderWork {
-    let mut sender = SenderWork::default();
-    sender.avatar_high = LocalAvatarSyncMessage {
-        additional_avatar_datas: Some(vec![AdditionalAvatarData { message_index: 2, payload_size: 3, array: Some(vec![1, 2, 3]) }]),
-        additional_avatar_data_size: 1,
-        linked_avatar_index: 7,
+    SenderWork {
+        avatar_high: LocalAvatarSyncMessage {
+            additional_avatar_datas: Some(vec![AdditionalAvatarData { message_index: 2, payload_size: 3, array: Some(vec![1, 2, 3]) }]),
+            additional_avatar_data_size: 1,
+            linked_avatar_index: 7,
+            ..Default::default()
+        },
         ..Default::default()
-    };
-    sender
+    }
 }
 
 #[test]

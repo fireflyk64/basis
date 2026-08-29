@@ -110,6 +110,7 @@ fn single_component_step_costs_far_less_than_the_field() {
         let layout = S::layout(q);
         let bpc = S::bpc(q);
 
+        #[allow(clippy::needless_range_loop)] // the slot indexes the layout as well as the table
         for slot in 0..S::WIRE_BONE_SLOTS {
             let kf = S::make_realistic_payload(q, &mut rng);
             let mut cur = kf.clone();
