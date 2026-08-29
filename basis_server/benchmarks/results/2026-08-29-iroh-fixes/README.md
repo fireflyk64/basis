@@ -94,3 +94,29 @@ Kept, on three grounds: the mechanism did what it was meant to, the semantics no
 LiteNetLib path this server also serves, and per-peer worst-case buffering drops 16×. What it
 does not do is close the iroh gap — that cost is `poll_transmit`, which is item 6's subject.
 Delivery was 1.0000 with zero drops on every run of both arms.
+
+## Item 6 — the upstream report and its reproducer (written, not sent)
+
+`../../../upstream/iroh-datagram-transmit-cost.md` is an issue-ready writeup for n0, and
+`../../../upstream/iroh-datagram-cost/` is a standalone crate (its own workspace, no dependency
+on this repository) that generates our traffic shape over iroh and over a plain UDP socket and
+reports each side's CPU per datagram from `/proc/self/stat`.
+
+**Nothing has been sent.** Posting it is a human's call and it should get a second read first.
+
+Running it here (`reproducer-output.txt`) reproduces the gap outside the application entirely —
+200 connections, 83 Hz each way, 500-byte payloads, each process pinned to its own core:
+
+| | plain UDP | iroh 1.1 datagrams |
+|---|---|---|
+| server CPU per datagram | 7.6–9.6 µs (median **8.3**) | 19.8–20.0 µs (median **20.0**) |
+| server CPU at that load | 0.24–0.32 cores | **0.57–0.58 cores** |
+| datagrams carried | 16.2k–16.6k/s — the full offered rate | 14.2k–14.7k/s |
+
+**2.4× the CPU per packet, and it does not keep up with the offered rate while a plain socket
+does.** That is the same conclusion the application benchmark reached (~7 µs vs ~21 µs), with
+no game logic in the process, which is what makes it worth sending upstream.
+
+It is also a much better instrument than the application rung: its five-second windows are
+stable to ±1 %, against ±25 % run-to-run for `serverCores` at all-iroh 200. Future transport
+work should be measured here first and confirmed end-to-end second.

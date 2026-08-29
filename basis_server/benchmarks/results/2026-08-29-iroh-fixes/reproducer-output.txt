@@ -1,0 +1,47 @@
+# Standalone reproducer output (upstream/iroh-datagram-cost), 2026-08-29
+# 200 connections, 83 Hz each way, 500-byte payloads, server on core 0, crowd on core 1.
+
+## iroh datagrams
+[iroh client] 200 connections established
+[iroh client] conns=200 cpu=0.448 cores  sent=11230/s recv=11010/s  20.14 µs cpu per datagram
+[iroh client] conns=200 cpu=0.622 cores  sent=15708/s recv=15616/s  19.85 µs cpu per datagram
+[iroh client] conns=200 cpu=0.526 cores  sent=13957/s recv=13717/s  19.00 µs cpu per datagram
+[iroh client] conns=200 cpu=0.608 cores  sent=15492/s recv=15315/s  19.73 µs cpu per datagram
+[iroh client] conns=200 cpu=0.554 cores  sent=14056/s recv=13961/s  19.76 µs cpu per datagram
+[iroh client] conns=200 cpu=0.594 cores  sent=14811/s recv=14892/s  19.99 µs cpu per datagram
+[iroh client] conns=200 cpu=0.544 cores  sent=14110/s recv=14207/s  19.21 µs cpu per datagram
+[iroh client] conns=200 cpu=0.584 cores  sent=14970/s recv=14815/s  19.60 µs cpu per datagram
+[iroh client] conns=200 cpu=0.544 cores  sent=14048/s recv=13997/s  19.39 µs cpu per datagram
+[iroh client] conns=200 cpu=0.588 cores  sent=15191/s recv=15035/s  19.45 µs cpu per datagram
+[iroh server] conns=200 cpu=0.000 cores  sent=0/s recv=0/s  0.00 µs cpu per datagram
+[iroh server] conns=200 cpu=0.431 cores  sent=8945/s recv=9038/s  23.97 µs cpu per datagram
+[iroh server] conns=200 cpu=0.584 cores  sent=14747/s recv=14779/s  19.78 µs cpu per datagram
+[iroh server] conns=200 cpu=0.562 cores  sent=14690/s recv=14689/s  19.13 µs cpu per datagram
+[iroh server] conns=200 cpu=0.570 cores  sent=14540/s recv=14753/s  19.45 µs cpu per datagram
+[iroh server] conns=200 cpu=0.588 cores  sent=14781/s recv=14757/s  19.90 µs cpu per datagram
+[iroh server] conns=200 cpu=0.572 cores  sent=14329/s recv=14309/s  19.97 µs cpu per datagram
+[iroh server] conns=200 cpu=0.584 cores  sent=14725/s recv=14627/s  19.89 µs cpu per datagram
+[iroh server] conns=200 cpu=0.580 cores  sent=14692/s recv=14675/s  19.75 µs cpu per datagram
+[iroh server] conns=200 cpu=0.570 cores  sent=14176/s recv=14292/s  20.02 µs cpu per datagram
+[iroh server] conns=200 cpu=0.558 cores  sent=14485/s recv=14556/s  19.21 µs cpu per datagram
+[iroh server] conns=200 cpu=0.600 cores  sent=14854/s recv=14675/s  20.31 µs cpu per datagram
+
+## plain UDP, same shape
+[udp server] conns=200 cpu=0.120 cores  sent=6519/s recv=6519/s  9.20 µs cpu per datagram
+[udp server] conns=200 cpu=0.226 cores  sent=16218/s recv=15898/s  7.03 µs cpu per datagram
+[udp server] conns=200 cpu=0.258 cores  sent=16568/s recv=16474/s  7.81 µs cpu per datagram
+[udp server] conns=200 cpu=0.238 cores  sent=15778/s recv=15644/s  7.57 µs cpu per datagram
+[udp server] conns=200 cpu=0.274 cores  sent=16594/s recv=16588/s  8.25 µs cpu per datagram
+[udp server] conns=200 cpu=0.238 cores  sent=15682/s recv=15288/s  7.68 µs cpu per datagram
+[udp server] conns=200 cpu=0.320 cores  sent=16598/s recv=16591/s  9.64 µs cpu per datagram
+[udp server] conns=200 cpu=0.246 cores  sent=16224/s recv=16020/s  7.63 µs cpu per datagram
+[udp server] conns=200 cpu=0.296 cores  sent=16459/s recv=16462/s  8.99 µs cpu per datagram
+[udp client] 200 sockets sending
+[udp client] conns=200 cpu=0.251 cores  sent=15956/s recv=16134/s  7.81 µs cpu per datagram
+[udp client] conns=200 cpu=0.262 cores  sent=16556/s recv=16564/s  7.91 µs cpu per datagram
+[udp client] conns=200 cpu=0.250 cores  sent=15858/s recv=15783/s  7.90 µs cpu per datagram
+[udp client] conns=200 cpu=0.296 cores  sent=16596/s recv=16596/s  8.92 µs cpu per datagram
+[udp client] conns=200 cpu=0.246 cores  sent=15497/s recv=15683/s  7.89 µs cpu per datagram
+[udp client] conns=200 cpu=0.318 cores  sent=16589/s recv=16595/s  9.58 µs cpu per datagram
+[udp client] conns=200 cpu=0.274 cores  sent=16094/s recv=16224/s  8.48 µs cpu per datagram
+[udp client] conns=200 cpu=0.316 cores  sent=16611/s recv=16609/s  9.51 µs cpu per datagram

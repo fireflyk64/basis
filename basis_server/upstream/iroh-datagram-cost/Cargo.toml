@@ -1,0 +1,18 @@
+# Standalone on purpose: this reproducer is meant to be copied out of the repository it came
+# from and run on its own, so it carries its own workspace table and depends on nothing local.
+[package]
+name = "iroh-datagram-cost"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[dependencies]
+iroh = { version = "1.1", default-features = false, features = ["tls-ring"] }
+tokio = { version = "1", features = ["full"] }
+bytes = "1"
+
+[profile.release]
+debug = "line-tables-only"
