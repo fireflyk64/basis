@@ -48,3 +48,49 @@ matters. Its dependency was removed rather than left in the tree.
 The honest size of this win is 3.7 % of the iroh path's CPU, not the double digits the first
 single run suggested. It is worth having and it is not the answer to the iroh gap; the profile's
 18.5 % allocator share is mostly work the transmit path asks for, not glibc being slow.
+
+## Item 3 — drain the datagram queue per wake, send without awaiting (kept)
+
+`sender_task` used to pop one frame, `await` `send_datagram_wait` on it, and loop: a future poll
+round trip per frame, ~16.6k of them a second at 200 players, and — because
+`send_datagram_wait` waits for buffer space — a policy of holding stale frames ahead of fresh
+ones, which is the opposite of what unreliable traffic wants. It now drains both queues (voice
+first, then bulk) under one lock acquisition each into a reused batch, and pushes each frame
+with the non-waiting `send_datagram`, whose own policy is to drop the *oldest* queued datagrams
+to make room — the policy our own per-peer queues already use and the one LiteNetLib's
+unreliable path has always had.
+
+Sized alongside it: the connection's datagram send buffer, 4 MiB → 256 KiB. That buffer is
+where a stalled path's backlog now lives, and 4 MiB is ~2800 MTU-sized frames — half a minute
+of one peer's traffic, 800 MB across a full room, and all of it stale state nobody wants
+delivered. 256 KiB is a second or two.
+
+**End-to-end: no measurable change at this scale.** Four paired long-window runs, all-iroh 200
+(`item3-runs.tsv`; one baseline run was lost to a flaky join — 199 of 200 clients — on the
+*unmodified* binary, the only such failure in ~30 runs this session):
+
+| paired run | µs/packet, item 3 vs item 1 |
+|---|---|
+| 1 | −4.0 % |
+| 2 | +5.4 % |
+| 3 | +4.6 % |
+| | **mean +2.0 % — inside this rung's noise** |
+
+**Mechanism: confirmed.** Two 25 s in-process profiles, both arms on mimalloc so only item 3
+differs (`item1-only.folded`, `item1-plus-item3.folded`, `compare-profiles.py`):
+
+| share of process CPU | item 1 only | item 1 + item 3 |
+|---|---|---|
+| `Notify` / waker / wake plumbing | 3.78 % | **2.69 % (−29 %)** |
+| `sender_task` path, total | 8.97 % | **8.40 % (−6 %)** |
+| `send_datagram(_wait)` named frames | 0.90 % | 3.42 % |
+| `poll_transmit`, noq inclusive, allocator, receive path | — | within the run's +5 % packet-rate difference |
+
+The `send_datagram` line rising while the sender path's total falls is the change showing up in
+the profile: the send work that used to be spread through future-polling scaffolding is now a
+direct call inside `sender_task`. The wake plumbing is where the saving landed.
+
+Kept, on three grounds: the mechanism did what it was meant to, the semantics now match the
+LiteNetLib path this server also serves, and per-peer worst-case buffering drops 16×. What it
+does not do is close the iroh gap — that cost is `poll_transmit`, which is item 6's subject.
+Delivery was 1.0000 with zero drops on every run of both arms.

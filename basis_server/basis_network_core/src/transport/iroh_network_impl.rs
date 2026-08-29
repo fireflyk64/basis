@@ -222,6 +222,9 @@ struct PeerState {
     ping_sent_at: Mutex<Option<(i64, Instant)>>,
     /// Set once a datagram exceeded the live MTU, so that warning is logged once per peer.
     warned_too_large: AtomicBool,
+    /// Set once this peer's queued frames outgrew the connection's datagram buffer, so that
+    /// warning is logged once per peer rather than once per congested pass.
+    warned_backlog: AtomicBool,
     /// A locally-decided disconnect reason (the send-queue watchdog), reported in place of the
     /// generic "locally closed" that `conn.closed()` would otherwise yield.
     local_disconnect_reason: Mutex<Option<DisconnectReason>>,
@@ -941,6 +944,7 @@ impl ManagerInner {
             control_tx: tokio::sync::Mutex::new(None),
             ping_sent_at: Mutex::new(None),
             warned_too_large: AtomicBool::new(false),
+            warned_backlog: AtomicBool::new(false),
             local_disconnect_reason: Mutex::new(None),
         });
         let peer = IrohNetPeer::new(state);
@@ -992,7 +996,14 @@ impl ManagerInner {
             .keep_alive_interval(keep_alive)
             .max_concurrent_uni_streams(VarInt::from_u32(4096))
             .datagram_receive_buffer_size(Some(4 * 1024 * 1024))
-            .datagram_send_buffer_size(4 * 1024 * 1024)
+            // Where an unreliable backlog now lives. The sender task pushes frames without
+            // waiting for buffer space (see `sender_task`), so this buffer — not our per-peer
+            // queue — is what a stalled path fills, and QUIC drops its oldest frames to keep the
+            // newest. 4 MiB of MTU-sized frames is ~2800 of them: half a minute of one peer's
+            // traffic, which is stale state nobody wants delivered and 800 MB across a full
+            // room. 256 KiB is ~180 frames, a second or two — enough to ride out a brief stall,
+            // little enough that recovery is not a replay of the distant past.
+            .datagram_send_buffer_size(256 * 1024)
             .send_window(send_window)
             .receive_window(VarInt::from_u32(receive_window))
             .build()
@@ -1257,36 +1268,82 @@ impl ManagerInner {
         self.listener.raise_peer_disconnected(Arc::new(IrohNetPeer::new(state)), info);
     }
 
+    /// Moves queued frames into `batch` under one lock acquisition, decrementing the per-channel
+    /// depth as each leaves the queue, up to `DATAGRAM_BATCH` in total across both queues.
+    fn drain_into(state: &PeerState, queue: &Mutex<VecDeque<Bytes>>, batch: &mut Vec<Bytes>) {
+        if batch.len() >= Self::DATAGRAM_BATCH {
+            return;
+        }
+        let mut queue = queue.lock();
+        while batch.len() < Self::DATAGRAM_BATCH {
+            let Some(frame) = queue.pop_front() else { break };
+            let channel = frame.first().copied().unwrap_or(0) & DATAGRAM_CHANNEL_MASK;
+            if let Some(counter) = state.queued_per_channel.get(usize::from(channel)) {
+                counter.fetch_sub(1, Ordering::Relaxed);
+            }
+            batch.push(frame);
+        }
+    }
+
+    /// Datagram frames one wake-up may push before the loop looks at newly arrived voice and at
+    /// the reliable queue again. A tick queues one frame per peer, so a steady-state pass moves
+    /// one or two; the bound only matters when a backlog has built, where it keeps a bulk burst
+    /// from starving everything else on this connection.
+    const DATAGRAM_BATCH: usize = 64;
+
+    /// A backlog this deep is where the connection's own datagram buffer is worth a look; below
+    /// it the buffer is empty by construction and the probe would cost a connection lock per
+    /// frame, which is exactly what draining in batches exists to avoid.
+    const BACKLOG_PROBE_AT: usize = 8;
+
     async fn sender_task(self: Arc<Self>, state: Arc<PeerState>) {
         let mut ordered_streams: HashMap<u8, SendStream> = HashMap::new();
+        // Reused across wake-ups, so the steady state neither allocates nor grows it.
+        let mut batch: Vec<Bytes> = Vec::with_capacity(Self::DATAGRAM_BATCH);
         loop {
-            // Voice first, then bulk, then reliable — the priority the C# transport gave voice.
-            let next_datagram = state.priority_queue.lock().pop_front().or_else(|| state.bulk_queue.lock().pop_front());
-            if let Some(frame) = next_datagram {
-                let channel = frame.first().copied().unwrap_or(0) & DATAGRAM_CHANNEL_MASK;
-                if let Some(counter) = state.queued_per_channel.get(usize::from(channel)) {
-                    counter.fetch_sub(1, Ordering::Relaxed);
-                }
-                let len = frame.len();
-                match state.conn.send_datagram_wait(frame).await {
-                    Ok(()) => self.record_sent(len),
-                    Err(iroh::endpoint::SendDatagramError::TooLarge) => {
-                        // The path MTU shrank under a frame that fitted when it was queued. It
-                        // is unreliable traffic: drop it, count it, say so once.
-                        self.unreliable_dropped.fetch_add(1, Ordering::Relaxed);
-                        if !state.warned_too_large.swap(true, Ordering::Relaxed) {
-                            BNL::log_warning(format!(
-                                "[iroh] peer {}: a {len} byte datagram no longer fits the path MTU; dropping such frames",
-                                state.id
-                            ));
-                        }
+            // Voice first, then bulk, then reliable — the priority the C# transport gave voice —
+            // but drained under one lock acquisition per queue rather than one per frame, and
+            // sent without awaiting: an unreliable frame that cannot go now is dropped, never
+            // waited on. `send_datagram` drops the oldest queued datagrams to make room, which
+            // is the policy our own queues already use and the one LiteNetLib's unreliable path
+            // has always had. `send_datagram_wait` did the opposite — it held this task until
+            // buffer space appeared, prioritising stale frames over fresh ones and costing a
+            // future poll round trip per frame.
+            Self::drain_into(&state, &state.priority_queue, &mut batch);
+            Self::drain_into(&state, &state.bulk_queue, &mut batch);
+            if !batch.is_empty() {
+                if batch.len() >= Self::BACKLOG_PROBE_AT {
+                    let wanted: usize = batch.iter().map(|frame| frame.len()).sum();
+                    if state.conn.datagram_send_buffer_space() < wanted && !state.warned_backlog.swap(true, Ordering::Relaxed) {
+                        BNL::log_warning(format!(
+                            "[iroh] peer {}: the connection's datagram buffer cannot hold a {} frame backlog; QUIC is dropping the oldest frames to keep the newest. Counted by QUIC, not by the per-peer drop counters.",
+                            state.id,
+                            batch.len()
+                        ));
                     }
-                    Err(iroh::endpoint::SendDatagramError::ConnectionLost(_)) => return,
-                    Err(e) => {
-                        // Datagrams disabled or unsupported: the peer cannot speak this protocol.
-                        BNL::log_error(format!("[iroh] peer {}: datagrams unavailable ({e}); closing", state.id));
-                        state.conn.close(VarInt::from_u32(CLOSE_PROTOCOL), b"datagrams unavailable");
-                        return;
+                }
+                for frame in batch.drain(..) {
+                    let len = frame.len();
+                    match state.conn.send_datagram(frame) {
+                        Ok(()) => self.record_sent(len),
+                        Err(iroh::endpoint::SendDatagramError::TooLarge) => {
+                            // The path MTU shrank under a frame that fitted when it was queued. It
+                            // is unreliable traffic: drop it, count it, say so once.
+                            self.unreliable_dropped.fetch_add(1, Ordering::Relaxed);
+                            if !state.warned_too_large.swap(true, Ordering::Relaxed) {
+                                BNL::log_warning(format!(
+                                    "[iroh] peer {}: a {len} byte datagram no longer fits the path MTU; dropping such frames",
+                                    state.id
+                                ));
+                            }
+                        }
+                        Err(iroh::endpoint::SendDatagramError::ConnectionLost(_)) => return,
+                        Err(e) => {
+                            // Datagrams disabled or unsupported: the peer cannot speak this protocol.
+                            BNL::log_error(format!("[iroh] peer {}: datagrams unavailable ({e}); closing", state.id));
+                            state.conn.close(VarInt::from_u32(CLOSE_PROTOCOL), b"datagrams unavailable");
+                            return;
+                        }
                     }
                 }
                 continue;
@@ -1645,6 +1702,7 @@ impl ManagerInner {
             control_tx: tokio::sync::Mutex::new(None),
             ping_sent_at: Mutex::new(None),
             warned_too_large: AtomicBool::new(false),
+            warned_backlog: AtomicBool::new(false),
             local_disconnect_reason: Mutex::new(None),
         });
         *shared.slot.lock() = Some(live.clone());
