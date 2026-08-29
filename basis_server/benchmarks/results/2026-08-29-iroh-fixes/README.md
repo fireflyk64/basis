@@ -120,3 +120,49 @@ no game logic in the process, which is what makes it worth sending upstream.
 It is also a much better instrument than the application rung: its five-second windows are
 stable to ±1 %, against ±25 % run-to-run for `serverCores` at all-iroh 200. Future transport
 work should be measured here first and confirmed end-to-end second.
+
+## Item 2 — ACK economy on both ends (kept, and it explains the earlier null result)
+
+Every QUIC datagram is ack-eliciting, so at the default the crowd sends this server roughly one
+ACK-only packet per two datagrams. `build_transport_config` now sets `ack_frequency_config`
+(threshold 10 packets, `max_ack_delay` 25 ms), and because **both ends of every connection are
+built from that same function** — the Rust clients directly, the C# clients through
+`basis_iroh_ffi` — configuring it there configures the whole conversation.
+
+Three arms, because the plan's premise was that the earlier "ACK tuning changed nothing" trial
+had configured only the server: baseline, server-only (new server, old crowd), both-ends (new
+server, new crowd). Two batches of three reps each, the second **with the arm order reversed**,
+because within a rep this box's packet rate drifts downward and whichever arm runs last would
+otherwise look best. Pooled (`pool-both-orders.py` over the two TSVs), 11 runs:
+
+| arm | packets/s | server cores | crowd cores | tick ms | voice |
+|---|---|---|---|---|---|
+| baseline | 21857 | 0.502 | 0.649 | 3.71 | 98.85 % |
+| server-only | 22064 (+0.9 %) | 0.501 (−0.2 %) | 0.631 | 3.78 | 98.94 % |
+| **both ends** | **21237 (−2.8 %)** | 0.494 (−1.5 %) | 0.634 | **3.32** | **99.12 %** |
+
+Paired against baseline: both-ends packets −2.3 % mean (4 of 5 negative), cores −0.8 %.
+**Real in direction, small enough here to sit at the edge of the noise** — and the mechanism
+says exactly why, which is the more useful result:
+
+**noq clamps a requested `max_ack_delay` to at most the greater of the path RTT and 25 ms.**
+On this rig every connection is loopback, RTT ≈ 0.2 ms, so the ceiling is 25 ms — and QUIC's
+*default* behaviour on this workload is already timer-bound at that same 25 ms, because each
+peer receives only ~55 packets/s and "acknowledge every second one" comes due later than the
+timer does. The threshold never binds. That is why the server-only arm is indistinguishable
+from baseline, and it reproduces and explains the earlier session's "ACK frequency changed
+nothing" without needing the both-ends hypothesis to be wrong.
+
+**Kept**, because a deployment is not loopback: at a real 50 ms RTT the clamp lifts to 50 ms and
+the threshold of 10 is what stops the every-second-packet rule from forcing an ACK every ~36 ms.
+The loopback rig is this lever's worst case, not its typical one. Tick and voice were the best
+of the three arms on every batch, and the crowd got 2 % cheaper too — the clients stop building
+those ACKs as well.
+
+## Flaky joins, for the record
+
+Two runs of ~55 this session failed with "only 199 of 200 clients connected within 5 min", both
+on **baseline** arms and on two *different* baseline builds (item-1-only, then item-3), so it
+does not track any change made here. The profile's `/proc/net/snmp` series shows this box's
+clamped 416 KB socket buffers dropping packets during iroh join storms, which is the likely
+cause and is item 4's territory. Worth watching on a host with writable `rmem_max`.
